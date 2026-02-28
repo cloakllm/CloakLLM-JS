@@ -1,0 +1,40 @@
+/**
+ * CloakLLM Configuration.
+ *
+ * All settings have sensible defaults. Override via constructor:
+ *   const config = new ShieldConfig({ logDir: './my-audit-logs' });
+ *   const shield = new Shield(config);
+ *
+ * Or via environment variables:
+ *   CLOAKLLM_LOG_DIR=./my-audit-logs
+ */
+
+class ShieldConfig {
+  constructor(options = {}) {
+    // --- Detection ---
+    this.detectEmails = options.detectEmails ?? true;
+    this.detectPhones = options.detectPhones ?? true;
+    this.detectSsns = options.detectSsns ?? true;
+    this.detectCreditCards = options.detectCreditCards ?? true;
+    this.detectApiKeys = options.detectApiKeys ?? true;
+    this.detectIpAddresses = options.detectIpAddresses ?? true;
+    this.detectIban = options.detectIban ?? true;
+    /** @type {Array<{name: string, pattern: string}>} */
+    this.customPatterns = options.customPatterns ?? [];
+
+    // --- Tokenization ---
+    this.descriptiveTokens = options.descriptiveTokens ?? true;
+
+    // --- Audit Logging ---
+    this.auditEnabled = options.auditEnabled ?? true;
+    this.logDir = options.logDir ?? process.env.CLOAKLLM_LOG_DIR ?? './cloakllm_audit';
+    this.logOriginalValues = options.logOriginalValues ?? false;
+
+    // --- Middleware ---
+    this.autoMode = options.autoMode ?? true;
+    /** @type {string[]} Model prefixes to skip sanitization */
+    this.skipModels = options.skipModels ?? [];
+  }
+}
+
+module.exports = { ShieldConfig };
