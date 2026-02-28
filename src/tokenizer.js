@@ -6,6 +6,11 @@
  * Tokens are descriptive: [PERSON_0], [EMAIL_1], etc.
  */
 
+const TOKEN_PATTERN = /\[([A-Z_]+_\d+)\]/g;
+const ESCAPED_OPEN = '\uFF3B';
+const ESCAPED_CLOSE = '\uFF3D';
+const ESCAPED_PATTERN = new RegExp(`${ESCAPED_OPEN}([A-Z_]+_\\d+)${ESCAPED_CLOSE}`, 'g');
+
 class TokenMap {
   constructor() {
     /** @type {Map<string, string>} original -> token */
@@ -69,6 +74,14 @@ class Tokenizer {
     this.config = config;
   }
 
+  escapeExistingTokens(text) {
+    return text.replace(TOKEN_PATTERN, (_, inner) => `${ESCAPED_OPEN}${inner}${ESCAPED_CLOSE}`);
+  }
+
+  unescapeTokens(text) {
+    return text.replace(ESCAPED_PATTERN, (_, inner) => `[${inner}]`);
+  }
+
   /**
    * Replace all detected entities in text with tokens.
    * @param {string} text
@@ -79,8 +92,8 @@ class Tokenizer {
   tokenize(text, detections, tokenMap = null) {
     if (!tokenMap) tokenMap = new TokenMap();
 
-    // Replace back-to-front so offsets stay valid
-    let result = text;
+    // Escape any existing token-like patterns to prevent fake token injection
+    let result = this.escapeExistingTokens(text);
     for (let i = detections.length - 1; i >= 0; i--) {
       const det = detections[i];
       const token = tokenMap.getOrCreate(det.text, det.category);
@@ -107,8 +120,11 @@ class Tokenizer {
 
     for (const [token, original] of sorted) {
       const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      result = result.replace(new RegExp(escaped, 'gi'), original);
+      result = result.replace(new RegExp(escaped, 'gi'), () => original);
     }
+
+    // Restore any escaped token-like patterns from the original input
+    result = this.unescapeTokens(result);
 
     return result;
   }

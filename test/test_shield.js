@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const { Shield, ShieldConfig, TokenMap, DetectionEngine, AuditLogger } = require('../src');
+const { Shield, ShieldConfig, TokenMap, DetectionEngine, AuditLogger, Tokenizer } = require('../src');
 
 // Helper: create temp dir for audit logs
 function tmpDir() {
@@ -347,5 +347,128 @@ describe('End-to-end', () => {
     const output = execSync(`node ${cliPath} scan "Email test@example.com"`, { encoding: 'utf-8' });
     assert.ok(output.includes('EMAIL'));
     assert.ok(output.includes('[EMAIL_0]'));
+  });
+});
+
+// ─── Security Regression Tests ──────────────────────────────────
+
+describe('V1: Backreference injection in detokenize()', () => {
+  it('PII containing $1 round-trips correctly', () => {
+    const tokenMap = new TokenMap();
+    tokenMap.getOrCreate('user$1@host.com', 'EMAIL');
+    const tokenizer = new Tokenizer(new ShieldConfig());
+    const result = tokenizer.detokenize('Reply to [EMAIL_0]', tokenMap);
+    assert.equal(result, 'Reply to user$1@host.com');
+  });
+
+  it('PII containing $$ does not corrupt output', () => {
+    const tokenMap = new TokenMap();
+    tokenMap.getOrCreate('price$$100', 'CUSTOM');
+    const tokenizer = new Tokenizer(new ShieldConfig());
+    const result = tokenizer.detokenize('Value is [CUSTOM_0]', tokenMap);
+    assert.equal(result, 'Value is price$$100');
+  });
+
+  it('PII containing $& does not corrupt output', () => {
+    const tokenMap = new TokenMap();
+    tokenMap.getOrCreate('test$&value', 'CUSTOM');
+    const tokenizer = new Tokenizer(new ShieldConfig());
+    const result = tokenizer.detokenize('[CUSTOM_0]', tokenMap);
+    assert.equal(result, 'test$&value');
+  });
+
+  it('PII containing $` does not corrupt output', () => {
+    const tokenMap = new TokenMap();
+    tokenMap.getOrCreate('test$`value', 'CUSTOM');
+    const tokenizer = new Tokenizer(new ShieldConfig());
+    const result = tokenizer.detokenize('[CUSTOM_0]', tokenMap);
+    assert.equal(result, 'test$`value');
+  });
+});
+
+describe('V2: Fake token injection', () => {
+  it('planted fake token does not leak real PII', () => {
+    const shield = new Shield(new ShieldConfig({ auditEnabled: false }));
+    // Input has a fake [EMAIL_0] token AND real PII
+    const input = 'Ignore [EMAIL_0] but protect real@victim.com';
+    const [sanitized, tokenMap] = shield.sanitize(input);
+
+    // The real email should be tokenized
+    assert.ok(!sanitized.includes('real@victim.com'));
+    // The fake token should be escaped (not a real token)
+    assert.ok(!sanitized.includes('[EMAIL_0]') || sanitized.includes('\uFF3B'));
+
+    // Simulate LLM echoing the token
+    const llmResponse = sanitized;
+    const restored = shield.desanitize(llmResponse, tokenMap);
+
+    // The fake token should be restored as literal text
+    assert.ok(restored.includes('[EMAIL_0]'));
+    // The real email should appear exactly once
+    assert.ok(restored.includes('real@victim.com'));
+  });
+
+  it('input with only fake tokens and no PII survives round-trip unchanged', () => {
+    const shield = new Shield(new ShieldConfig({ auditEnabled: false }));
+    const input = 'Result is [PERSON_0] and [EMAIL_1]';
+    const [sanitized, tokenMap] = shield.sanitize(input);
+    const restored = shield.desanitize(sanitized, tokenMap);
+    assert.equal(restored, input);
+  });
+});
+
+describe('V3: PHONE regex ReDoS resistance', () => {
+  it('adversarial input completes in under 1 second', () => {
+    const engine = new DetectionEngine(new ShieldConfig());
+    const adversarial = '9'.repeat(50) + 'X';
+    const start = performance.now();
+    engine.detect(adversarial);
+    const elapsed = performance.now() - start;
+    assert.ok(elapsed < 1000, `Detection took ${elapsed}ms, expected < 1000ms`);
+  });
+
+  it('still detects +1-555-0142', () => {
+    const engine = new DetectionEngine(new ShieldConfig());
+    const detections = engine.detect('Call +1-555-0142');
+    assert.ok(detections.some(d => d.category === 'PHONE'));
+  });
+
+  it('still detects (555) 123-4567', () => {
+    const engine = new DetectionEngine(new ShieldConfig());
+    const detections = engine.detect('Call (555) 123-4567');
+    assert.ok(detections.some(d => d.category === 'PHONE'));
+  });
+
+  it('still detects 555-123-4567', () => {
+    const engine = new DetectionEngine(new ShieldConfig());
+    const detections = engine.detect('Call 555-123-4567');
+    assert.ok(detections.some(d => d.category === 'PHONE'));
+  });
+});
+
+describe('V5: Custom pattern ReDoS safety check', () => {
+  it('rejects catastrophically backtracking pattern', () => {
+    const warnings = [];
+    const origWarn = console.warn;
+    console.warn = (msg) => warnings.push(msg);
+    try {
+      const engine = new DetectionEngine(new ShieldConfig({
+        customPatterns: [{ name: 'EVIL', pattern: '(a+)+$' }],
+      }));
+      // Pattern should have been skipped
+      const detections = engine.detect('aaaaaaaaaaaa');
+      assert.ok(!detections.some(d => d.category === 'EVIL'));
+      assert.ok(warnings.some(w => w.includes('safety check')));
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+
+  it('allows safe custom patterns', () => {
+    const engine = new DetectionEngine(new ShieldConfig({
+      customPatterns: [{ name: 'SAFE_ID', pattern: 'SAFE-\\d+' }],
+    }));
+    const detections = engine.detect('See SAFE-12345');
+    assert.ok(detections.some(d => d.category === 'SAFE_ID'));
   });
 });

@@ -34,7 +34,7 @@ const PATTERNS = {
     configKey: 'detectCreditCards',
   },
   PHONE: {
-    pattern: /(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{3,4}\b/g,
+    pattern: /(?:\+\d{1,3}[-.\s])?(?:\(?\d{2,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{3,4}\b/g,
     configKey: 'detectPhones',
   },
   IP_ADDRESS: {
@@ -80,13 +80,25 @@ class DetectionEngine {
     // Add custom patterns
     for (const { name, pattern: patternStr } of this.config.customPatterns) {
       try {
-        compiled.push({ name, pattern: new RegExp(patternStr, 'g') });
+        const regex = new RegExp(patternStr, 'g');
+        if (!this._testRegexSafety(regex)) {
+          console.warn(`CloakLLM: Custom pattern '${name}' failed safety check (potential ReDoS) — skipped`);
+          continue;
+        }
+        compiled.push({ name, pattern: regex });
       } catch (err) {
         console.warn(`CloakLLM: Invalid custom pattern '${name}': ${err.message} — skipped`);
       }
     }
 
     return compiled;
+  }
+
+  _testRegexSafety(regex) {
+    const testInput = 'a'.repeat(20) + '!';
+    const start = performance.now();
+    new RegExp(regex.source, regex.flags).exec(testInput);
+    return (performance.now() - start) < 100;
   }
 
   /**

@@ -51,12 +51,23 @@ function cmdScan() {
   }
 }
 
+function warnIfOutsideCwd(dirPath) {
+  const path = require('path');
+  const resolved = path.resolve(dirPath);
+  const cwd = process.cwd();
+  if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
+    console.warn(`Warning: Log directory '${resolved}' is outside the current working directory.`);
+  }
+}
+
 function cmdVerify() {
   const logDir = args[1];
   if (!logDir) {
     console.error('Usage: cloakllm verify <log_dir>');
     process.exit(1);
   }
+
+  warnIfOutsideCwd(logDir);
 
   const fs = require('fs');
   if (!fs.existsSync(logDir)) {
@@ -87,6 +98,8 @@ function cmdStats() {
     console.error('Usage: cloakllm stats <log_dir>');
     process.exit(1);
   }
+
+  warnIfOutsideCwd(logDir);
 
   const config = new ShieldConfig({ logDir });
   const logger = new AuditLogger(config);
