@@ -4,7 +4,7 @@
 
 CloakLLM intercepts your LLM API calls, detects and cloaks PII before it reaches the provider, and logs every event to a tamper-evident audit chain designed for EU AI Act Article 12 compliance.
 
-> **Also available for Python:** `pip install cloakllm` — includes spaCy NER for name/org/location detection. See [CloakLLM Python](https://github.com/cloakllm/CloakLLM).
+> **Also available for Python:** `pip install cloakllm` — includes spaCy NER for name/org/location detection. See [CloakLLM Python](https://github.com/cloakllm/CloakLLM-PY).
 
 ## Install
 
@@ -65,7 +65,7 @@ const restored = shield.desanitize(llmResponse, tokenMap);
 | `JWT` | `eyJhbG...` | Regex |
 | `IBAN` | `DE89370400440532013000` | Regex |
 
-> **NER (names, orgs, locations)** is available in the [Python version](https://github.com/cloakllm/CloakLLM) via spaCy. JS NER support is on the roadmap.
+> **NER (names, orgs, locations)** is available in the [Python version](https://github.com/cloakllm/CloakLLM-PY) via spaCy. JS NER support is on the roadmap.
 
 ## How It Works
 
@@ -161,4 +161,4 @@ MIT — See [LICENSE](LICENSE).
 
 ## See Also
 
-- **[CloakLLM Python](https://github.com/cloakllm/CloakLLM)** — Python version with spaCy NER + LiteLLM integration
+- **[CloakLLM Python](https://github.com/cloakllm/CloakLLM-PY)** — Python version with spaCy NER + LiteLLM integration
