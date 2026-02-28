@@ -1,0 +1,51 @@
+{
+  "name": "cloakllm",
+  "version": "0.1.0",
+  "description": "PII cloaking and tamper-evident audit logs for LLM API calls. EU AI Act Article 12 compliance.",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "bin": {
+    "cloakllm": "./src/cli.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.js"
+  },
+  "keywords": [
+    "llm",
+    "privacy",
+    "pii",
+    "compliance",
+    "eu-ai-act",
+    "openai",
+    "audit",
+    "security",
+    "gdpr",
+    "data-protection"
+  ],
+  "author": "Ziv (Zivuch) Chen",
+  "license": "MIT",
+  "homepage": "https://github.com/cloakllm/CloakLLM-JS",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cloakllm/CloakLLM-JS"
+  },
+  "bugs": {
+    "url": "https://github.com/cloakllm/CloakLLM-JS/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "src/",
+    "LICENSE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "openai": ">=4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "openai": {
+      "optional": true
+    }
+  }
+}

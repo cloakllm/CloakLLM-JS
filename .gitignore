@@ -1,0 +1,5 @@
+node_modules/
+cloakllm_audit/
+example_audit/
+*.log
+.DS_Store
