@@ -12,6 +12,7 @@
  */
 
 const path = require('path');
+const { version: PKG_VERSION } = require(path.join(__dirname, '..', 'package.json'));
 const { ShieldConfig } = require('./config');
 const { Shield } = require('./shield');
 const { TokenMap } = require('./tokenizer');
@@ -189,7 +190,7 @@ function enable(client, config = null) {
 
   _shield.audit.log({
     eventType: 'shield_enabled',
-    metadata: { runtime: 'node', version: '0.1.0' },
+    metadata: { runtime: 'node', version: PKG_VERSION },
   });
 
   console.log(`🛡️  CloakLLM enabled — detecting PII across all OpenAI calls`);
