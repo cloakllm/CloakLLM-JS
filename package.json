@@ -1,6 +1,6 @@
 {
   "name": "cloakllm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "PII cloaking and tamper-evident audit logs for LLM API calls. EU AI Act Article 12 compliance.",
   "main": "src/index.js",
   "types": "src/index.d.ts",
@@ -17,6 +17,7 @@
     "compliance",
     "eu-ai-act",
     "openai",
+    "vercel-ai-sdk",
     "audit",
     "security",
     "gdpr",
@@ -41,10 +42,14 @@
     "README.md"
   ],
   "peerDependencies": {
-    "openai": ">=4.0.0"
+    "openai": ">=4.0.0",
+    "ai": ">=4.0.0"
   },
   "peerDependenciesMeta": {
     "openai": {
+      "optional": true
+    },
+    "ai": {
       "optional": true
     }
   }

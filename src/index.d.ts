@@ -11,6 +11,11 @@ export interface ShieldConfigOptions {
   detectIpAddresses?: boolean;
   detectIban?: boolean;
   customPatterns?: Array<{ name: string; pattern: string }>;
+  llmDetection?: boolean;
+  llmModel?: string;
+  llmOllamaUrl?: string;
+  llmTimeout?: number;
+  llmConfidence?: number;
   descriptiveTokens?: boolean;
   auditEnabled?: boolean;
   logDir?: string;
@@ -29,6 +34,11 @@ export class ShieldConfig {
   detectIpAddresses: boolean;
   detectIban: boolean;
   customPatterns: Array<{ name: string; pattern: string }>;
+  llmDetection: boolean;
+  llmModel: string;
+  llmOllamaUrl: string;
+  llmTimeout: number;
+  llmConfidence: number;
   descriptiveTokens: boolean;
   auditEnabled: boolean;
   logDir: string;
@@ -124,3 +134,27 @@ export function enable(client: any, config?: ShieldConfig): void;
 export function disable(client?: any): void;
 export function getShield(): Shield | null;
 export function isEnabled(): boolean;
+
+export interface CloakLLMMiddleware {
+  transformParams(options: {
+    params: { prompt: any[]; [key: string]: any };
+    type: string;
+    model?: { modelId: string; [key: string]: any };
+  }): Promise<{ prompt: any[]; [key: string]: any }>;
+
+  wrapGenerate(options: {
+    doGenerate: () => Promise<any>;
+    params: { prompt: any[]; [key: string]: any };
+    model: { modelId: string; [key: string]: any };
+  }): Promise<any>;
+
+  wrapStream(options: {
+    doStream: () => Promise<{ stream: ReadableStream; [key: string]: any }>;
+    params: { prompt: any[]; [key: string]: any };
+    model: { modelId: string; [key: string]: any };
+  }): Promise<{ stream: ReadableStream; [key: string]: any }>;
+}
+
+export function createCloakLLMMiddleware(
+  config?: ShieldConfig | ShieldConfigOptions
+): CloakLLMMiddleware;
