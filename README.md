@@ -34,6 +34,26 @@ const response = await client.chat.completions.create({
 // Response has the real email restored automatically
 ```
 
+### With Vercel AI SDK
+
+```javascript
+const { createCloakLLMMiddleware } = require('cloakllm');
+const { generateText, wrapLanguageModel } = require('ai');
+const { openai } = require('@ai-sdk/openai');
+
+const middleware = createCloakLLMMiddleware();
+const model = wrapLanguageModel({ model: openai('gpt-4o'), middleware });
+
+const { text } = await generateText({
+  model,
+  prompt: 'Write a reminder for sarah.j@techcorp.io about the Q3 audit'
+});
+// Provider never saw "sarah.j@techcorp.io"
+// Response has the real email restored automatically
+```
+
+Works with any AI SDK provider (OpenAI, Anthropic, Google, Mistral, etc.) and supports both `generateText` and `streamText`.
+
 ### Standalone
 
 ```javascript
@@ -64,8 +84,20 @@ const restored = shield.desanitize(llmResponse, tokenMap);
 | `AWS_KEY` | `AKIAIOSFODNN7EXAMPLE` | Regex |
 | `JWT` | `eyJhbG...` | Regex |
 | `IBAN` | `DE89370400440532013000` | Regex |
+| `PERSON` | John Smith | LLM (Local) |
+| `ORG` | Acme Corp, Google | LLM (Local) |
+| `GPE` | New York, Israel | LLM (Local) |
+| `ADDRESS` | 742 Evergreen Terrace | LLM (Local) |
+| `DATE_OF_BIRTH` | 1990-01-15 | LLM (Local) |
+| `MEDICAL` | diabetes mellitus | LLM (Local) |
+| `FINANCIAL` | account 4521-XXX | LLM (Local) |
+| `NATIONAL_ID` | TZ 12345678 | LLM (Local) |
+| `BIOMETRIC` | fingerprint hash | LLM (Local) |
+| `USERNAME` | @johndoe42 | LLM (Local) |
+| `PASSWORD` | P@ssw0rd123 | LLM (Local) |
+| `VEHICLE` | plate ABC-1234 | LLM (Local) |
 
-> **NER (names, orgs, locations)** is available in the [Python version](https://github.com/cloakllm/CloakLLM-PY) via spaCy. JS NER support is on the roadmap.
+> **LLM categories** require opt-in (`llmDetection: true`) and a local [Ollama](https://ollama.com) instance. Data never leaves your machine.
 
 ## How It Works
 
@@ -134,6 +166,13 @@ const shield = new Shield(new ShieldConfig({
   customPatterns: [
     { name: 'EMPLOYEE_ID', pattern: 'EMP-\\d{6}' }
   ],
+
+  // LLM Detection (opt-in, requires Ollama)
+  llmDetection: true,                         // Enable LLM-based detection
+  llmModel: 'llama3.2',                       // Ollama model
+  llmOllamaUrl: 'http://localhost:11434',      // Ollama endpoint
+  llmTimeout: 10000,                           // Timeout in ms
+  llmConfidence: 0.85,                         // Confidence score
 }));
 ```
 
@@ -148,9 +187,10 @@ Article 12 of the EU AI Act requires tamper-evident audit logs for AI systems. E
 
 ## Roadmap
 
-- [ ] NER-based detection (names, orgs, locations) via compromise.js or similar
+- [x] NER-based detection (names, orgs, locations) via local LLM
+- [x] Local LLM detection (opt-in, via Ollama)
 - [ ] Streaming response support
-- [ ] Vercel AI SDK middleware
+- [x] Vercel AI SDK middleware
 - [ ] LangChain.js integration
 - [ ] OpenTelemetry span emission
 - [ ] RFC 3161 trusted timestamping

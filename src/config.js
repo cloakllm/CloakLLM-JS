@@ -22,6 +22,14 @@ class ShieldConfig {
     /** @type {Array<{name: string, pattern: string}>} */
     this.customPatterns = options.customPatterns ?? [];
 
+    // --- LLM Detection (Pass 2: local LLM via Ollama) ---
+    this.llmDetection = options.llmDetection ??
+      (process.env.CLOAKLLM_LLM_DETECTION ?? 'false').toLowerCase() === 'true';
+    this.llmModel = options.llmModel ?? process.env.CLOAKLLM_LLM_MODEL ?? 'llama3.2';
+    this.llmOllamaUrl = options.llmOllamaUrl ?? process.env.CLOAKLLM_OLLAMA_URL ?? 'http://localhost:11434';
+    this.llmTimeout = options.llmTimeout ?? 10000;
+    this.llmConfidence = options.llmConfidence ?? 0.85;
+
     // --- Tokenization ---
     this.descriptiveTokens = options.descriptiveTokens ?? true;
 

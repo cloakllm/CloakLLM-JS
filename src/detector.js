@@ -16,7 +16,7 @@
  * @property {number} start - Start character offset
  * @property {number} end - End character offset
  * @property {number} confidence - 0.0-1.0 confidence score
- * @property {string} source - "regex"
+ * @property {string} source - "regex" or "llm"
  */
 
 // Ordered by specificity (most specific first)
@@ -66,6 +66,13 @@ class DetectionEngine {
   constructor(config) {
     this.config = config;
     this._compiledPatterns = this._buildPatterns();
+
+    // --- LLM detector (opt-in Pass 2) ---
+    this._llmDetector = null;
+    if (config.llmDetection) {
+      const { LlmDetector } = require('./llm-detector');
+      this._llmDetector = new LlmDetector(config);
+    }
   }
 
   _buildPatterns() {
@@ -142,6 +149,12 @@ class DetectionEngine {
         });
         coveredSpans.push([start, end]);
       }
+    }
+
+    // --- Pass 2: Local LLM (semantic/contextual PII, opt-in) ---
+    if (this._llmDetector !== null) {
+      const llmDetections = this._llmDetector.detect(text, coveredSpans);
+      detections.push(...llmDetections);
     }
 
     // Sort by start position
