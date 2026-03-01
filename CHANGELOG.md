@@ -12,6 +12,7 @@ versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Local LLM detection (opt-in, via Ollama) for semantic PII: names, orgs, locations, addresses, medical info, financial data, national IDs, biometrics, usernames, passwords, vehicle info
 - LLM detection config: `llmDetection`, `llmModel`, `llmOllamaUrl`, `llmTimeout`, `llmConfidence`
 - TypeScript definitions for LLM detection config fields
+- Vercel AI SDK middleware integration
 
 ### Fixed
 
@@ -27,7 +28,6 @@ versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Tamper-evident hash-chained audit logger (EU AI Act Article 12 compliance)
 - Shield engine tying detection, tokenization, and audit into a single interface
 - OpenAI SDK middleware integration (`cloakllm.enable(client)` / `cloakllm.disable(client)`)
-- Vercel AI SDK middleware integration
 - Multi-turn conversation support via reusable token maps
 - Custom regex pattern support via `ShieldConfig.customPatterns`
 - CLI commands: `scan`, `verify`, `stats`
