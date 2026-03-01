@@ -472,3 +472,31 @@ describe('V5: Custom pattern ReDoS safety check', () => {
     assert.ok(detections.some(d => d.category === 'SAFE_ID'));
   });
 });
+
+describe('Custom pattern priority over built-ins', () => {
+  it('custom pattern wins over built-in PHONE on overlapping span', () => {
+    const engine = new DetectionEngine(new ShieldConfig({
+      customPatterns: [{ name: 'CASE_NUMBER', pattern: 'CASE-\\d{4}-\\d{4}' }],
+    }));
+    const detections = engine.detect('Contact EMP-123456 about CASE-2024-0891');
+    assert.ok(detections.some(d => d.category === 'CASE_NUMBER' && d.text === 'CASE-2024-0891'));
+    assert.ok(!detections.some(d => d.category === 'PHONE' && d.text.includes('2024-0891')));
+  });
+
+  it('sanitize uses custom category token, not built-in', () => {
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({
+        logDir,
+        auditEnabled: false,
+        customPatterns: [{ name: 'CASE_NUMBER', pattern: 'CASE-\\d{4}-\\d{4}' }],
+      }));
+      const [sanitized] = shield.sanitize('Contact EMP-123456 about CASE-2024-0891');
+      assert.ok(sanitized.includes('[CASE_NUMBER_0]'));
+      assert.ok(!sanitized.includes('CASE-2024-0891'));
+      assert.ok(!sanitized.includes('[PHONE_'));
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+});

@@ -78,13 +78,7 @@ class DetectionEngine {
   _buildPatterns() {
     const compiled = [];
 
-    for (const [name, { pattern, configKey }] of Object.entries(PATTERNS)) {
-      if (this.config[configKey] !== false) {
-        compiled.push({ name, pattern });
-      }
-    }
-
-    // Add custom patterns
+    // Custom patterns first — user-defined patterns take priority
     for (const { name, pattern: patternStr } of this.config.customPatterns) {
       try {
         const regex = new RegExp(patternStr, 'g');
@@ -95,6 +89,13 @@ class DetectionEngine {
         compiled.push({ name, pattern: regex });
       } catch (err) {
         console.warn(`CloakLLM: Invalid custom pattern '${name}': ${err.message} — skipped`);
+      }
+    }
+
+    // Built-in patterns second
+    for (const [name, { pattern, configKey }] of Object.entries(PATTERNS)) {
+      if (this.config[configKey] !== false) {
+        compiled.push({ name, pattern });
       }
     }
 
