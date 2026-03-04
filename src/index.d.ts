@@ -16,6 +16,7 @@ export interface ShieldConfigOptions {
   llmOllamaUrl?: string;
   llmTimeout?: number;
   llmConfidence?: number;
+  mode?: 'tokenize' | 'redact';
   descriptiveTokens?: boolean;
   auditEnabled?: boolean;
   logDir?: string;
@@ -39,6 +40,7 @@ export class ShieldConfig {
   llmOllamaUrl: string;
   llmTimeout: number;
   llmConfidence: number;
+  mode: 'tokenize' | 'redact';
   descriptiveTokens: boolean;
   auditEnabled: boolean;
   logDir: string;
@@ -57,9 +59,11 @@ export interface Detection {
 }
 
 export class TokenMap {
+  constructor(options?: { mode?: 'tokenize' | 'redact' });
   forward: Map<string, string>;
   reverse: Map<string, string>;
   detections: Detection[];
+  mode: 'tokenize' | 'redact';
   readonly entityCount: number;
   readonly categories: Record<string, number>;
   getOrCreate(original: string, category: string): string;
@@ -124,6 +128,7 @@ export class AuditLogger {
     categories?: Record<string, number>;
     tokensUsed?: string[];
     latencyMs?: number;
+    mode?: string | null;
     metadata?: Record<string, any>;
   }): Record<string, any> | null;
   verifyChain(logFilePath?: string | null): { valid: boolean; errors: string[] };

@@ -31,6 +31,10 @@ class ShieldConfig {
     this.llmConfidence = options.llmConfidence ?? 0.85;
 
     // --- Tokenization ---
+    this.mode = options.mode ?? 'tokenize';
+    if (this.mode !== 'tokenize' && this.mode !== 'redact') {
+      throw new Error(`Invalid mode '${this.mode}'. Must be 'tokenize' or 'redact'.`);
+    }
     this.descriptiveTokens = options.descriptiveTokens ?? true;
 
     // --- Audit Logging ---

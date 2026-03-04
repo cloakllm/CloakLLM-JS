@@ -71,6 +71,17 @@ const restored = shield.desanitize(llmResponse, tokenMap);
 // Original values restored
 ```
 
+### Redaction Mode (irreversible)
+
+```javascript
+const { Shield, ShieldConfig } = require('cloakllm');
+
+const shield = new Shield(new ShieldConfig({ mode: 'redact' }));
+const [redacted] = shield.sanitize('Email john@acme.com about Sarah Johnson');
+// redacted: "Email [EMAIL_REDACTED] about [PERSON_REDACTED]"
+// No token map stored — cannot be reversed
+```
+
 ## What It Detects
 
 | Category | Examples | Method |
@@ -191,6 +202,7 @@ Article 12 of the EU AI Act requires tamper-evident audit logs for AI systems. E
 - [x] Local LLM detection (opt-in, via Ollama)
 - [x] Streaming response support
 - [x] Vercel AI SDK middleware
+- [x] Redaction / scrubbing mode
 - [ ] LangChain.js integration
 - [ ] OpenTelemetry span emission
 - [ ] RFC 3161 trusted timestamping

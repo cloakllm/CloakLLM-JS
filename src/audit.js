@@ -93,6 +93,7 @@ class AuditLogger {
     categories = {},
     tokensUsed = [],
     latencyMs = 0,
+    mode = null,
     metadata = {},
   }) {
     if (!this.config.auditEnabled) return null;
@@ -116,6 +117,7 @@ class AuditLogger {
         ? crypto.createHash('sha256').update(sanitizedText).digest('hex')
         : '',
       latency_ms: Math.round(latencyMs * 100) / 100,
+      mode,
       prev_hash: this._prevHash,
       metadata,
     };

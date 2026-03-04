@@ -42,9 +42,23 @@ class Shield {
     const startTime = performance.now();
 
     const detections = this.detector.detect(text);
+
+    // Ensure token_map has the correct mode
+    if (!tokenMap) {
+      tokenMap = new TokenMap({ mode: this.config.mode });
+    }
+
     const [sanitized, map] = this.tokenizer.tokenize(text, detections, tokenMap);
 
     const elapsedMs = performance.now() - startTime;
+
+    // Build tokens_used list — in redact mode, collect from detections
+    let tokensUsed;
+    if (this.config.mode === 'redact') {
+      tokensUsed = [...new Set(detections.map(d => `[${d.category}_REDACTED]`))];
+    } else {
+      tokensUsed = [...map.reverse.keys()];
+    }
 
     this.audit.log({
       eventType: 'sanitize',
@@ -54,8 +68,9 @@ class Shield {
       provider,
       entityCount: detections.length,
       categories: map.categories,
-      tokensUsed: [...map.reverse.keys()],
+      tokensUsed,
       latencyMs: elapsedMs,
+      mode: this.config.mode,
       metadata,
     });
 
@@ -86,6 +101,7 @@ class Shield {
       categories: tokenMap.categories,
       tokensUsed: [...tokenMap.reverse.keys()],
       latencyMs: elapsedMs,
+      mode: this.config.mode,
       metadata,
     });
 

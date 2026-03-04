@@ -12,7 +12,11 @@ const ESCAPED_CLOSE = '\uFF3D';
 const ESCAPED_PATTERN = new RegExp(`${ESCAPED_OPEN}([A-Z_]+_\\d+)${ESCAPED_CLOSE}`, 'g');
 
 class TokenMap {
-  constructor() {
+  /**
+   * @param {Object} [options]
+   * @param {string} [options.mode] - "tokenize" or "redact"
+   */
+  constructor({ mode = 'tokenize' } = {}) {
     /** @type {Map<string, string>} original -> token */
     this.forward = new Map();
     /** @type {Map<string, string>} token -> original */
@@ -21,6 +25,8 @@ class TokenMap {
     this._counters = new Map();
     /** @type {import('./detector').Detection[]} */
     this.detections = [];
+    /** @type {string} */
+    this.mode = mode;
   }
 
   /**
@@ -30,6 +36,10 @@ class TokenMap {
    * @returns {string}
    */
   getOrCreate(original, category) {
+    if (this.mode === 'redact') {
+      return `[${category}_REDACTED]`;
+    }
+
     const key = original.trim();
     if (this.forward.has(key)) {
       return this.forward.get(key);

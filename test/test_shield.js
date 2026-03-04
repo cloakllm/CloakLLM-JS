@@ -595,3 +595,94 @@ describe('Custom pattern priority over built-ins', () => {
     }
   });
 });
+
+// ─── Redaction Mode Tests ─────────────────────────────────────────
+
+describe('Redaction Mode', () => {
+  it('replaces PII with [CATEGORY_REDACTED]', () => {
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ mode: 'redact', logDir }));
+      const [sanitized] = shield.sanitize('Email john@acme.com please');
+      assert.ok(sanitized.includes('[EMAIL_REDACTED]'));
+      assert.ok(!sanitized.includes('john@acme.com'));
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('token map is empty in redact mode', () => {
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ mode: 'redact', logDir }));
+      const [, tokenMap] = shield.sanitize('Email john@acme.com please');
+      assert.equal(tokenMap.entityCount, 0);
+      assert.equal(tokenMap.forward.size, 0);
+      assert.equal(tokenMap.reverse.size, 0);
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('desanitize is a no-op in redact mode', () => {
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ mode: 'redact', logDir }));
+      const [sanitized, tokenMap] = shield.sanitize('Email john@acme.com please');
+      const result = shield.desanitize(sanitized, tokenMap);
+      assert.equal(result, sanitized);
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('audit log includes mode field', () => {
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ mode: 'redact', logDir }));
+      shield.sanitize('Email john@acme.com please');
+      const logFiles = fs.readdirSync(logDir).filter(f => f.endsWith('.jsonl'));
+      assert.equal(logFiles.length, 1);
+      const content = fs.readFileSync(path.join(logDir, logFiles[0]), 'utf-8');
+      const entry = JSON.parse(content.split('\n')[0]);
+      assert.equal(entry.mode, 'redact');
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('multiple same-category entities all become [CATEGORY_REDACTED]', () => {
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ mode: 'redact', logDir }));
+      const [sanitized] = shield.sanitize('Email john@acme.com and jane@acme.com');
+      const matches = sanitized.match(/\[EMAIL_REDACTED\]/g);
+      assert.equal(matches.length, 2);
+      assert.ok(!sanitized.includes('john@acme.com'));
+      assert.ok(!sanitized.includes('jane@acme.com'));
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('analyze() is unaffected by redact mode', () => {
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ mode: 'redact', logDir }));
+      const result = shield.analyze('Email john@acme.com please');
+      assert.ok(result.entity_count >= 1);
+      assert.ok(result.entities.some(e => e.text === 'john@acme.com'));
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('default mode is tokenize', () => {
+    const config = new ShieldConfig();
+    assert.equal(config.mode, 'tokenize');
+  });
+
+  it('rejects invalid mode', () => {
+    assert.throws(() => new ShieldConfig({ mode: 'invalid' }), /Invalid mode/);
+  });
+});

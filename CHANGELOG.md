@@ -5,6 +5,16 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-03-04
+
+### Added
+
+- Redaction mode: `new ShieldConfig({ mode: 'redact' })` for irreversible PII removal — replaces entities with `[CATEGORY_REDACTED]`
+- No token map stored in redact mode — desanitize() is a no-op
+- `mode` field in audit log entries
+- TypeScript type support for mode option
+- 8 new tests for redaction mode (total: 88 tests)
+
 ## [0.1.5] - 2026-03-04
 
 ### Changed
@@ -59,6 +69,7 @@ versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Zero runtime dependencies — uses only Node.js builtins
 - Test suite with 50 tests covering detection, tokenization, audit chain, and end-to-end flows
 
+[0.1.6]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.6
 [0.1.5]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.5
 [0.1.4]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.4
 [0.1.3]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.3
