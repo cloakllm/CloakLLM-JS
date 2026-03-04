@@ -159,12 +159,60 @@ function enable(client, config = null) {
     try {
       const response = await originalCreate(params, ...rest);
 
-      // Handle streaming responses
+      // Handle streaming responses: buffer all chunks, then desanitize the
+      // full assembled text before yielding a single final chunk.
+      // Trade-off: no incremental streaming UX, but guarantees correct
+      // desanitization. A partial-flush approach can be added later.
       if (params.stream) {
-        // For streaming, we can't easily desanitize mid-stream
-        // Clean up token map — user should use Shield directly for streaming
-        if (callKey) _activeMaps.delete(callKey);
-        return response;
+        if (!callKey || _shouldSkip(model)) return response;
+
+        const streamCallKey = callKey;
+        callKey = ''; // let the generator own cleanup
+
+        async function* bufferAndDesanitize(stream) {
+          try {
+            let buffer = '';
+            let lastChunk = null;
+
+            for await (const chunk of stream) {
+              lastChunk = chunk;
+              const delta = chunk.choices?.[0]?.delta;
+              if (delta?.content) {
+                buffer += delta.content;
+              }
+
+              const finishReason = chunk.choices?.[0]?.finish_reason;
+              if (finishReason) {
+                // Desanitize the full buffered response
+                const desanitized = _desanitizeResponse(buffer, model, streamCallKey);
+                yield {
+                  ...chunk,
+                  choices: [{
+                    ...chunk.choices[0],
+                    delta: { ...chunk.choices[0].delta, content: desanitized },
+                  }],
+                };
+                return;
+              }
+            }
+
+            // Stream ended without finish_reason — emit whatever we have
+            if (buffer && lastChunk) {
+              const desanitized = _desanitizeResponse(buffer, model, streamCallKey);
+              yield {
+                ...lastChunk,
+                choices: [{
+                  ...lastChunk.choices[0],
+                  delta: { content: desanitized },
+                }],
+              };
+            }
+          } finally {
+            _activeMaps.delete(streamCallKey);
+          }
+        }
+
+        return bufferAndDesanitize(response);
       }
 
       // Desanitize non-streaming response
@@ -180,7 +228,7 @@ function enable(client, config = null) {
 
       return response;
     } finally {
-      // Always clean up
+      // Always clean up (streaming path handles its own cleanup)
       if (callKey) _activeMaps.delete(callKey);
     }
   };

@@ -17,7 +17,7 @@ No `npm install` is needed — CloakLLM has zero runtime dependencies.
 node --test test/*.js
 ```
 
-All 50 tests should pass. Node.js 18+ is required.
+All 80 tests should pass. Node.js 18+ is required.
 
 ## Project Structure
 

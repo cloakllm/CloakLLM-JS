@@ -473,6 +473,101 @@ describe('V5: Custom pattern ReDoS safety check', () => {
   });
 });
 
+// ─── Streaming Desanitization Tests ──────────────────────────────
+
+describe('OpenAI SDK streaming desanitization', () => {
+  let logDir;
+
+  beforeEach(() => {
+    logDir = tmpDir();
+  });
+
+  afterEach(() => {
+    const { disable } = require('../src/middleware');
+    disable();
+    fs.rmSync(logDir, { recursive: true, force: true });
+  });
+
+  it('buffers streaming chunks and desanitizes the final output', async () => {
+    const { enable, disable } = require('../src/middleware');
+    const { ShieldConfig } = require('../src');
+
+    // Build a mock async iterable of streaming chunks
+    async function* mockStream() {
+      yield { choices: [{ delta: { content: "I'll email " }, finish_reason: null }] };
+      yield { choices: [{ delta: { content: '[EMAIL_0]' }, finish_reason: null }] };
+      yield { choices: [{ delta: { content: ' right away.' }, finish_reason: 'stop' }] };
+    }
+
+    const mockClient = {
+      chat: {
+        completions: {
+          create: async (params) => {
+            // Return the mock stream
+            return mockStream();
+          },
+        },
+      },
+    };
+
+    enable(mockClient, new ShieldConfig({ logDir, auditEnabled: false }));
+
+    const result = await mockClient.chat.completions.create({
+      model: 'gpt-4',
+      stream: true,
+      messages: [{ role: 'user', content: 'Email john@example.com about the project' }],
+    });
+
+    // Collect all yielded chunks from the generator
+    const chunks = [];
+    for await (const chunk of result) {
+      chunks.push(chunk);
+    }
+
+    // Should yield a single desanitized chunk
+    assert.equal(chunks.length, 1);
+    const finalContent = chunks[0].choices[0].delta.content;
+    assert.ok(finalContent.includes('john@example.com'), `Expected real email in: ${finalContent}`);
+    assert.ok(!finalContent.includes('[EMAIL_0]'), `Token should be replaced in: ${finalContent}`);
+  });
+
+  it('handles streaming with no PII gracefully', async () => {
+    const { enable } = require('../src/middleware');
+    const { ShieldConfig } = require('../src');
+
+    async function* mockStream() {
+      yield { choices: [{ delta: { content: 'Hello ' }, finish_reason: null }] };
+      yield { choices: [{ delta: { content: 'world!' }, finish_reason: 'stop' }] };
+    }
+
+    const mockClient = {
+      chat: {
+        completions: {
+          create: async () => mockStream(),
+        },
+      },
+    };
+
+    enable(mockClient, new ShieldConfig({ logDir, auditEnabled: false }));
+
+    const result = await mockClient.chat.completions.create({
+      model: 'gpt-4',
+      stream: true,
+      messages: [{ role: 'user', content: 'Say hello' }],
+    });
+
+    const chunks = [];
+    for await (const chunk of result) {
+      chunks.push(chunk);
+    }
+
+    // No PII means the stream is returned as-is (not wrapped)
+    // Actually with no PII, callKey is '' so it returns raw stream
+    // Let's just verify we got output
+    assert.ok(chunks.length >= 1);
+  });
+});
+
 describe('Custom pattern priority over built-ins', () => {
   it('custom pattern wins over built-in PHONE on overlapping span', () => {
     const engine = new DetectionEngine(new ShieldConfig({

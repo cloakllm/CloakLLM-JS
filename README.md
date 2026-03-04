@@ -189,7 +189,7 @@ Article 12 of the EU AI Act requires tamper-evident audit logs for AI systems. E
 
 - [x] NER-based detection (names, orgs, locations) via local LLM
 - [x] Local LLM detection (opt-in, via Ollama)
-- [ ] Streaming response support
+- [x] Streaming response support
 - [x] Vercel AI SDK middleware
 - [ ] LangChain.js integration
 - [ ] OpenTelemetry span emission

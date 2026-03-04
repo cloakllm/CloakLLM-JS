@@ -5,6 +5,12 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-03-04
+
+### Fixed
+
+- OpenAI SDK streaming responses are now desanitized: chunks are buffered until completion, then the full text is desanitized and yielded as a single final chunk
+
 ## [0.1.3] - 2026-03-02
 
 ### Fixed
@@ -47,6 +53,7 @@ versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Zero runtime dependencies — uses only Node.js builtins
 - Test suite with 50 tests covering detection, tokenization, audit chain, and end-to-end flows
 
+[0.1.4]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.4
 [0.1.3]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.3
 [0.1.2]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.2
 [0.1.1]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.1
