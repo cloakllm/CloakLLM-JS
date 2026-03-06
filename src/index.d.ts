@@ -58,6 +58,16 @@ export interface Detection {
   source: string;
 }
 
+export interface EntityDetail {
+  category: string;
+  start: number;
+  end: number;
+  length: number;
+  confidence: number;
+  source: string;
+  token: string;
+}
+
 export class TokenMap {
   constructor(options?: { mode?: 'tokenize' | 'redact' });
   forward: Map<string, string>;
@@ -66,8 +76,10 @@ export class TokenMap {
   mode: 'tokenize' | 'redact';
   readonly entityCount: number;
   readonly categories: Record<string, number>;
+  readonly entityDetails: EntityDetail[];
   getOrCreate(original: string, category: string): string;
   toSummary(): { entity_count: number; categories: Record<string, number>; tokens: string[] };
+  toReport(): { entity_count: number; categories: Record<string, number>; tokens: string[]; mode: string; entity_details: EntityDetail[] };
 }
 
 export class Shield {
@@ -129,6 +141,7 @@ export class AuditLogger {
     tokensUsed?: string[];
     latencyMs?: number;
     mode?: string | null;
+    entityDetails?: EntityDetail[];
     metadata?: Record<string, any>;
   }): Record<string, any> | null;
   verifyChain(logFilePath?: string | null): { valid: boolean; errors: string[] };

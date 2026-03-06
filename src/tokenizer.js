@@ -66,12 +66,48 @@ class TokenMap {
     return counts;
   }
 
+  /** Per-entity metadata list (PII-safe — no original text). */
+  get entityDetails() {
+    const details = [];
+    for (const det of this.detections) {
+      let token;
+      if (this.mode === 'redact') {
+        token = `[${det.category}_REDACTED]`;
+      } else {
+        const key = det.text.trim();
+        token = this.forward.get(key) ?? '';
+      }
+      details.push({
+        category: det.category,
+        start: det.start,
+        end: det.end,
+        length: det.end - det.start,
+        confidence: det.confidence,
+        source: det.source,
+        token,
+      });
+    }
+    details.sort((a, b) => a.start - b.start);
+    return details;
+  }
+
   /** Non-sensitive summary for logging. */
   toSummary() {
     return {
       entity_count: this.entityCount,
       categories: this.categories,
       tokens: [...this.reverse.keys()],
+    };
+  }
+
+  /** Extended summary with per-entity details (PII-safe). */
+  toReport() {
+    return {
+      entity_count: this.entityCount,
+      categories: this.categories,
+      tokens: [...this.reverse.keys()],
+      mode: this.mode,
+      entity_details: this.entityDetails,
     };
   }
 }

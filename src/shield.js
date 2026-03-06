@@ -71,6 +71,7 @@ class Shield {
       tokensUsed,
       latencyMs: elapsedMs,
       mode: this.config.mode,
+      entityDetails: map.entityDetails,
       metadata,
     });
 
@@ -102,6 +103,7 @@ class Shield {
       tokensUsed: [...tokenMap.reverse.keys()],
       latencyMs: elapsedMs,
       mode: this.config.mode,
+      entityDetails: tokenMap.entityDetails,
       metadata,
     });
 

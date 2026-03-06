@@ -82,6 +82,25 @@ const [redacted] = shield.sanitize('Email john@acme.com about Sarah Johnson');
 // No token map stored — cannot be reversed
 ```
 
+### Entity Details (compliance metadata)
+
+```javascript
+const { Shield } = require('cloakllm');
+
+const shield = new Shield();
+const [sanitized, tokenMap] = shield.sanitize('Email john@acme.com, SSN 123-45-6789');
+
+// Per-entity metadata (no original text — PII-safe)
+console.log(tokenMap.entityDetails);
+// [
+//   { category: 'EMAIL', start: 6, end: 19, length: 13, confidence: 0.95, source: 'regex', token: '[EMAIL_0]' },
+//   { category: 'SSN', start: 25, end: 36, length: 11, confidence: 0.95, source: 'regex', token: '[SSN_0]' }
+// ]
+
+// Full report for dashboards
+console.log(tokenMap.toReport());
+```
+
 ## What It Detects
 
 | Category | Examples | Method |
@@ -134,6 +153,11 @@ Every event is logged to JSONL files with hash chaining:
   "entity_count": 3,
   "categories": {"EMAIL": 1, "SSN": 1, "PHONE": 1},
   "prompt_hash": "sha256:9f86d0...",
+  "entity_details": [
+    {"category": "EMAIL", "start": 0, "end": 13, "length": 13, "confidence": 0.95, "source": "regex", "token": "[EMAIL_0]"},
+    {"category": "SSN", "start": 15, "end": 26, "length": 11, "confidence": 0.95, "source": "regex", "token": "[SSN_0]"},
+    {"category": "PHONE", "start": 28, "end": 40, "length": 12, "confidence": 0.95, "source": "regex", "token": "[PHONE_0]"}
+  ],
   "prev_hash": "sha256:7c4d2e...",
   "entry_hash": "sha256:b5e8f3..."
 }
@@ -203,6 +227,7 @@ Article 12 of the EU AI Act requires tamper-evident audit logs for AI systems. E
 - [x] Streaming response support
 - [x] Vercel AI SDK middleware
 - [x] Redaction / scrubbing mode
+- [x] Field-level PII metadata (entityDetails)
 - [ ] LangChain.js integration
 - [ ] OpenTelemetry span emission
 - [ ] RFC 3161 trusted timestamping

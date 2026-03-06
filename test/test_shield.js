@@ -686,3 +686,95 @@ describe('Redaction Mode', () => {
     assert.throws(() => new ShieldConfig({ mode: 'invalid' }), /Invalid mode/);
   });
 });
+
+// ─── Entity Details Tests ─────────────────────────────────────────
+
+describe('Entity Details', () => {
+  let logDir;
+
+  beforeEach(() => {
+    logDir = tmpDir();
+  });
+
+  afterEach(() => {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  });
+
+  it('entityDetails has correct fields, sorted by start, no text key', () => {
+    const shield = new Shield(new ShieldConfig({ logDir, auditEnabled: false }));
+    const [, tokenMap] = shield.sanitize('Email john@acme.com, SSN 123-45-6789');
+    const details = tokenMap.entityDetails;
+    assert.ok(details.length >= 2);
+    const expectedKeys = ['category', 'start', 'end', 'length', 'confidence', 'source', 'token'];
+    for (const d of details) {
+      for (const key of expectedKeys) {
+        assert.ok(key in d, `Missing key: ${key}`);
+      }
+      assert.ok(!('text' in d), 'Should not have text key');
+      assert.equal(d.length, d.end - d.start);
+      assert.ok(d.token.startsWith('['));
+    }
+    // Sorted by start
+    for (let i = 1; i < details.length; i++) {
+      assert.ok(details[i].start >= details[i - 1].start);
+    }
+  });
+
+  it('toReport() returns superset of toSummary() plus entity_details and mode', () => {
+    const shield = new Shield(new ShieldConfig({ logDir, auditEnabled: false }));
+    const [, tokenMap] = shield.sanitize('Email john@acme.com');
+    const report = tokenMap.toReport();
+    const summary = tokenMap.toSummary();
+    assert.equal(report.entity_count, summary.entity_count);
+    assert.deepEqual(report.categories, summary.categories);
+    assert.deepEqual(report.tokens, summary.tokens);
+    assert.ok('mode' in report);
+    assert.ok('entity_details' in report);
+    assert.ok(report.entity_details.length >= 1);
+  });
+
+  it('audit log entries include entity_details array', () => {
+    const shield = new Shield(new ShieldConfig({ logDir }));
+    shield.sanitize('Email john@acme.com');
+    const files = fs.readdirSync(logDir).filter(f => f.endsWith('.jsonl'));
+    assert.equal(files.length, 1);
+    const content = fs.readFileSync(path.join(logDir, files[0]), 'utf-8');
+    const entry = JSON.parse(content.split('\n')[0]);
+    assert.ok('entity_details' in entry);
+    assert.ok(Array.isArray(entry.entity_details));
+    assert.ok(entry.entity_details.length >= 1);
+    assert.equal(entry.entity_details[0].category, 'EMAIL');
+  });
+
+  it('no original PII text appears in audit entity_details', () => {
+    const shield = new Shield(new ShieldConfig({ logDir }));
+    shield.sanitize('Email john@acme.com, SSN 123-45-6789');
+    const files = fs.readdirSync(logDir).filter(f => f.endsWith('.jsonl'));
+    const content = fs.readFileSync(path.join(logDir, files[0]), 'utf-8');
+    assert.ok(!content.includes('john@acme.com'));
+    assert.ok(!content.includes('123-45-6789'));
+  });
+
+  it('in redact mode, tokens show [CATEGORY_REDACTED]', () => {
+    const shield = new Shield(new ShieldConfig({ mode: 'redact', logDir }));
+    const [, tokenMap] = shield.sanitize('Email john@acme.com');
+    const details = tokenMap.entityDetails;
+    assert.ok(details.length >= 1);
+    assert.equal(details[0].token, '[EMAIL_REDACTED]');
+  });
+
+  it('entityDetails is empty when no PII is detected', () => {
+    const shield = new Shield(new ShieldConfig({ logDir, auditEnabled: false }));
+    const [, tokenMap] = shield.sanitize('Hello world, no PII here');
+    assert.deepEqual(tokenMap.entityDetails, []);
+  });
+
+  it('hash chain remains valid with entity_details included', () => {
+    const shield = new Shield(new ShieldConfig({ logDir }));
+    shield.sanitize('Email john@acme.com');
+    shield.sanitize('SSN 123-45-6789');
+    shield.sanitize('No PII here');
+    const { valid, errors } = shield.verifyAudit();
+    assert.ok(valid, `Chain errors: ${errors.join(', ')}`);
+  });
+});
