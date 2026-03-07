@@ -778,3 +778,116 @@ describe('Entity Details', () => {
     assert.ok(valid, `Chain errors: ${errors.join(', ')}`);
   });
 });
+
+// ─── Batch Processing Tests ──────────────────────────────────────
+
+describe('Batch operations', () => {
+  let logDir;
+
+  beforeEach(() => {
+    logDir = tmpDir();
+  });
+
+  afterEach(() => {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  });
+
+  it('basic batch sanitization', () => {
+    const shield = new Shield(new ShieldConfig({ logDir, auditEnabled: false }));
+    const [sanitized, tokenMap] = shield.sanitizeBatch([
+      'Email john@acme.com',
+      'SSN 123-45-6789',
+    ]);
+    assert.equal(sanitized.length, 2);
+    assert.ok(sanitized[0].includes('[EMAIL_0]'));
+    assert.ok(sanitized[1].includes('[SSN_0]'));
+    assert.ok(!sanitized[0].includes('john@acme.com'));
+  });
+
+  it('shared tokens across texts', () => {
+    const shield = new Shield(new ShieldConfig({ logDir, auditEnabled: false }));
+    const [sanitized, tokenMap] = shield.sanitizeBatch([
+      'Email john@acme.com about the project',
+      'Follow up with john@acme.com tomorrow',
+    ]);
+    assert.ok(sanitized[0].includes('[EMAIL_0]'));
+    assert.ok(sanitized[1].includes('[EMAIL_0]'));
+    assert.equal(tokenMap.entityCount, 1);
+  });
+
+  it('single audit entry for batch', () => {
+    const shield = new Shield(new ShieldConfig({ logDir }));
+    shield.sanitizeBatch(['Email john@acme.com', 'SSN 123-45-6789']);
+    const files = fs.readdirSync(logDir).filter(f => f.endsWith('.jsonl'));
+    assert.equal(files.length, 1);
+    const content = fs.readFileSync(path.join(logDir, files[0]), 'utf-8');
+    const lines = content.split('\n').filter(l => l.trim());
+    assert.equal(lines.length, 1);
+    const entry = JSON.parse(lines[0]);
+    assert.equal(entry.event_type, 'sanitize_batch');
+    assert.ok(Array.isArray(entry.metadata.prompt_hashes));
+    assert.equal(entry.metadata.prompt_hashes.length, 2);
+  });
+
+  it('entity_details include text_index', () => {
+    const shield = new Shield(new ShieldConfig({ logDir }));
+    shield.sanitizeBatch(['Email john@acme.com', 'SSN 123-45-6789']);
+    const files = fs.readdirSync(logDir).filter(f => f.endsWith('.jsonl'));
+    const content = fs.readFileSync(path.join(logDir, files[0]), 'utf-8');
+    const entry = JSON.parse(content.split('\n')[0]);
+    const details = entry.entity_details;
+    assert.ok(details.length >= 2);
+    const indices = new Set(details.map(d => d.text_index));
+    assert.ok(indices.has(0));
+    assert.ok(indices.has(1));
+  });
+
+  it('empty list', () => {
+    const shield = new Shield(new ShieldConfig({ logDir, auditEnabled: false }));
+    const [sanitized, tokenMap] = shield.sanitizeBatch([]);
+    assert.deepEqual(sanitized, []);
+    assert.equal(tokenMap.entityCount, 0);
+  });
+
+  it('no-PII texts unchanged', () => {
+    const shield = new Shield(new ShieldConfig({ logDir, auditEnabled: false }));
+    const texts = ['Hello world', 'Nice weather'];
+    const [sanitized] = shield.sanitizeBatch(texts);
+    assert.deepEqual(sanitized, texts);
+  });
+
+  it('reuse existing token map', () => {
+    const shield = new Shield(new ShieldConfig({ logDir, auditEnabled: false }));
+    const [, map1] = shield.sanitize('Email john@acme.com');
+    const [sanitized, map2] = shield.sanitizeBatch(
+      ['Remind john@acme.com', 'Also notify jane@acme.com'],
+      { tokenMap: map1 }
+    );
+    assert.ok(sanitized[0].includes('[EMAIL_0]'));
+    assert.ok(sanitized[1].includes('[EMAIL_1]'));
+  });
+
+  it('desanitizeBatch restores originals', () => {
+    const shield = new Shield(new ShieldConfig({ logDir, auditEnabled: false }));
+    const [sanitized, tokenMap] = shield.sanitizeBatch([
+      'Email john@acme.com',
+      'Server 10.0.0.1',
+    ]);
+    const restored = shield.desanitizeBatch(
+      ['Sent to [EMAIL_0]', 'Configured [IP_ADDRESS_0]'],
+      tokenMap
+    );
+    assert.equal(restored.length, 2);
+    assert.ok(restored[0].includes('john@acme.com'));
+    assert.ok(restored[1].includes('10.0.0.1'));
+  });
+
+  it('audit chain valid with batch + single mixed', () => {
+    const shield = new Shield(new ShieldConfig({ logDir }));
+    shield.sanitize('Email john@acme.com');
+    shield.sanitizeBatch(['SSN 123-45-6789', 'Phone 555-123-4567']);
+    shield.desanitizeBatch(['test'], new TokenMap());
+    const { valid, errors } = shield.verifyAudit();
+    assert.ok(valid, `Chain errors: ${errors.join(', ')}`);
+  });
+});

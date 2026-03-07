@@ -68,6 +68,10 @@ export interface EntityDetail {
   token: string;
 }
 
+export interface BatchEntityDetail extends EntityDetail {
+  text_index: number;
+}
+
 export class TokenMap {
   constructor(options?: { mode?: 'tokenize' | 'redact' });
   forward: Map<string, string>;
@@ -107,6 +111,26 @@ export class Shield {
       metadata?: Record<string, any>;
     }
   ): string;
+
+  sanitizeBatch(
+    texts: string[],
+    options?: {
+      tokenMap?: TokenMap | null;
+      model?: string | null;
+      provider?: string | null;
+      metadata?: Record<string, any>;
+    }
+  ): [string[], TokenMap];
+
+  desanitizeBatch(
+    texts: string[],
+    tokenMap: TokenMap,
+    options?: {
+      model?: string | null;
+      provider?: string | null;
+      metadata?: Record<string, any>;
+    }
+  ): string[];
 
   analyze(text: string): {
     entity_count: number;

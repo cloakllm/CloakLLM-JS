@@ -5,6 +5,15 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-03-07
+
+### Added
+
+- Batch processing API: `shield.sanitizeBatch(texts)` / `shield.desanitizeBatch(texts, tokenMap)` — shared token map, single audit entry
+- `BatchEntityDetail` TypeScript interface (extends `EntityDetail` with `text_index`)
+- `sanitizeBatch` / `desanitizeBatch` type declarations
+- 9 new tests for batch operations (total: 72 tests)
+
 ## [0.1.7] - 2026-03-06
 
 ### Added
@@ -79,6 +88,7 @@ versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Zero runtime dependencies — uses only Node.js builtins
 - Test suite with 50 tests covering detection, tokenization, audit chain, and end-to-end flows
 
+[0.1.8]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.8
 [0.1.7]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.7
 [0.1.6]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.6
 [0.1.5]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.5
