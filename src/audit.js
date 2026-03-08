@@ -95,6 +95,7 @@ class AuditLogger {
     latencyMs = 0,
     mode = null,
     entityDetails = [],
+    timing = null,
     metadata = {},
   }) {
     if (!this.config.auditEnabled) return null;
@@ -120,6 +121,7 @@ class AuditLogger {
       latency_ms: Math.round(latencyMs * 100) / 100,
       mode,
       entity_details: entityDetails,
+      timing,
       prev_hash: this._prevHash,
       metadata,
     };

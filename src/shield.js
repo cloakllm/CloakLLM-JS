@@ -26,6 +26,31 @@ class Shield {
     this.detector = new DetectionEngine(this.config);
     this.tokenizer = new Tokenizer(this.config);
     this.audit = new AuditLogger(this.config);
+    this._metrics = Shield._emptyMetrics();
+  }
+
+  static _emptyMetrics() {
+    return {
+      calls: { sanitize: 0, desanitize: 0, sanitizeBatch: 0, desanitizeBatch: 0 },
+      total_ms: 0,
+      detection: { regex_ms: 0, llm_ms: 0 },
+      tokenization_ms: 0,
+      entities_detected: 0,
+      categories: {},
+    };
+  }
+
+  _accumulate(callType, totalMs, detectionTiming, tokenizationMs, entityCount, categories) {
+    this._metrics.calls[callType]++;
+    this._metrics.total_ms += totalMs;
+    for (const key of ['regex_ms', 'llm_ms']) {
+      this._metrics.detection[key] += (detectionTiming[key] || 0);
+    }
+    this._metrics.tokenization_ms += tokenizationMs;
+    this._metrics.entities_detected += entityCount;
+    for (const [cat, count] of Object.entries(categories)) {
+      this._metrics.categories[cat] = (this._metrics.categories[cat] || 0) + count;
+    }
   }
 
   /**
@@ -41,16 +66,27 @@ class Shield {
   sanitize(text, { tokenMap = null, model = null, provider = null, metadata = {} } = {}) {
     const startTime = performance.now();
 
-    const detections = this.detector.detect(text);
+    let t0 = performance.now();
+    const { detections, timing: detectionTiming } = this.detector.detect(text);
+    const detectionMs = performance.now() - t0;
 
     // Ensure token_map has the correct mode
     if (!tokenMap) {
       tokenMap = new TokenMap({ mode: this.config.mode });
     }
 
+    t0 = performance.now();
     const [sanitized, map] = this.tokenizer.tokenize(text, detections, tokenMap);
+    const tokenizationMs = performance.now() - t0;
 
     const elapsedMs = performance.now() - startTime;
+
+    const timing = {
+      total_ms: +elapsedMs.toFixed(2),
+      detection_ms: +detectionMs.toFixed(2),
+      ...detectionTiming,
+      tokenization_ms: +tokenizationMs.toFixed(2),
+    };
 
     // Build tokens_used list — in redact mode, collect from detections
     let tokensUsed;
@@ -59,6 +95,8 @@ class Shield {
     } else {
       tokensUsed = [...map.reverse.keys()];
     }
+
+    this._accumulate('sanitize', elapsedMs, detectionTiming, tokenizationMs, detections.length, map.categories);
 
     this.audit.log({
       eventType: 'sanitize',
@@ -72,6 +110,7 @@ class Shield {
       latencyMs: elapsedMs,
       mode: this.config.mode,
       entityDetails: map.entityDetails,
+      timing,
       metadata,
     });
 
@@ -88,9 +127,20 @@ class Shield {
   desanitize(text, tokenMap, { model = null, provider = null, metadata = {} } = {}) {
     const startTime = performance.now();
 
+    const t0 = performance.now();
     const result = this.tokenizer.detokenize(text, tokenMap);
+    const tokenizationMs = performance.now() - t0;
 
     const elapsedMs = performance.now() - startTime;
+
+    const timing = {
+      total_ms: +elapsedMs.toFixed(2),
+      tokenization_ms: +tokenizationMs.toFixed(2),
+    };
+
+    this._metrics.calls.desanitize++;
+    this._metrics.total_ms += elapsedMs;
+    this._metrics.tokenization_ms += tokenizationMs;
 
     this.audit.log({
       eventType: 'desanitize',
@@ -104,6 +154,7 @@ class Shield {
       latencyMs: elapsedMs,
       mode: this.config.mode,
       entityDetails: tokenMap.entityDetails,
+      timing,
       metadata,
     });
 
@@ -130,11 +181,24 @@ class Shield {
     const sanitizedTexts = [];
     const allEntityDetails = [];
     let totalDetections = 0;
+    const combinedDetectionTiming = { regex_ms: 0, llm_ms: 0 };
+    let totalDetectionMs = 0;
+    let totalTokenizationMs = 0;
 
     for (let textIndex = 0; textIndex < texts.length; textIndex++) {
       const text = texts[textIndex];
-      const detections = this.detector.detect(text);
+
+      let t0 = performance.now();
+      const { detections, timing: detTiming } = this.detector.detect(text);
+      totalDetectionMs += performance.now() - t0;
+      for (const key of ['regex_ms', 'llm_ms']) {
+        combinedDetectionTiming[key] += (detTiming[key] || 0);
+      }
+
+      t0 = performance.now();
       const [sanitized, map] = this.tokenizer.tokenize(text, detections, tokenMap);
+      totalTokenizationMs += performance.now() - t0;
+
       tokenMap = map;
       sanitizedTexts.push(sanitized);
       totalDetections += detections.length;
@@ -162,12 +226,22 @@ class Shield {
 
     const elapsedMs = performance.now() - startTime;
 
+    const timing = {
+      total_ms: +elapsedMs.toFixed(2),
+      detection_ms: +totalDetectionMs.toFixed(2),
+      regex_ms: +combinedDetectionTiming.regex_ms.toFixed(2),
+      llm_ms: +combinedDetectionTiming.llm_ms.toFixed(2),
+      tokenization_ms: +totalTokenizationMs.toFixed(2),
+    };
+
     let tokensUsed;
     if (this.config.mode === 'redact') {
       tokensUsed = [...new Set(allEntityDetails.map(d => d.token))];
     } else {
       tokensUsed = [...tokenMap.reverse.keys()];
     }
+
+    this._accumulate('sanitizeBatch', elapsedMs, combinedDetectionTiming, totalTokenizationMs, totalDetections, tokenMap.categories);
 
     const crypto = require('crypto');
     const auditMetadata = { ...metadata };
@@ -190,6 +264,7 @@ class Shield {
       latencyMs: elapsedMs,
       mode: this.config.mode,
       entityDetails: allEntityDetails,
+      timing,
       metadata: auditMetadata,
     });
 
@@ -206,9 +281,20 @@ class Shield {
   desanitizeBatch(texts, tokenMap, { model = null, provider = null, metadata = {} } = {}) {
     const startTime = performance.now();
 
+    const t0 = performance.now();
     const results = texts.map(text => this.tokenizer.detokenize(text, tokenMap));
+    const tokenizationMs = performance.now() - t0;
 
     const elapsedMs = performance.now() - startTime;
+
+    const timing = {
+      total_ms: +elapsedMs.toFixed(2),
+      tokenization_ms: +tokenizationMs.toFixed(2),
+    };
+
+    this._metrics.calls.desanitizeBatch++;
+    this._metrics.total_ms += elapsedMs;
+    this._metrics.tokenization_ms += tokenizationMs;
 
     this.audit.log({
       eventType: 'desanitize_batch',
@@ -222,6 +308,7 @@ class Shield {
       latencyMs: elapsedMs,
       mode: this.config.mode,
       entityDetails: tokenMap.entityDetails,
+      timing,
       metadata,
     });
 
@@ -234,7 +321,7 @@ class Shield {
    * @returns {Object}
    */
   analyze(text) {
-    const detections = this.detector.detect(text);
+    const { detections } = this.detector.detect(text);
     return {
       entity_count: detections.length,
       entities: detections.map(d => ({
@@ -246,6 +333,31 @@ class Shield {
         source: d.source,
       })),
     };
+  }
+
+  /**
+   * Return accumulated performance metrics for this Shield instance.
+   * @returns {Object}
+   */
+  metrics() {
+    const totalCalls = Object.values(this._metrics.calls).reduce((a, b) => a + b, 0);
+    return {
+      calls: { ...this._metrics.calls },
+      total_ms: +this._metrics.total_ms.toFixed(2),
+      avg_ms: totalCalls ? +(this._metrics.total_ms / totalCalls).toFixed(2) : 0,
+      detection: {
+        regex_ms: +this._metrics.detection.regex_ms.toFixed(2),
+        llm_ms: +this._metrics.detection.llm_ms.toFixed(2),
+      },
+      tokenization_ms: +this._metrics.tokenization_ms.toFixed(2),
+      entities_detected: this._metrics.entities_detected,
+      categories: { ...this._metrics.categories },
+    };
+  }
+
+  /** Reset accumulated performance metrics. */
+  resetMetrics() {
+    this._metrics = Shield._emptyMetrics();
   }
 
   /** Verify the integrity of all audit logs. */

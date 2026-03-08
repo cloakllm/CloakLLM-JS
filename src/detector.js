@@ -112,14 +112,17 @@ class DetectionEngine {
   /**
    * Detect all sensitive entities in text.
    * @param {string} text
-   * @returns {Detection[]} Sorted by start position
+   * @returns {{ detections: Detection[], timing: Object }} Sorted by start position, with per-pass timing
    */
   detect(text) {
     /** @type {Detection[]} */
     const detections = [];
     /** @type {Array<[number, number]>} */
     const coveredSpans = [];
+    const timing = {};
 
+    // --- Pass 1: Regex (fast, high precision for structured data) ---
+    let t0 = performance.now();
     for (const { name, pattern } of this._compiledPatterns) {
       // Reset regex state (global flag)
       const regex = new RegExp(pattern.source, pattern.flags);
@@ -151,16 +154,19 @@ class DetectionEngine {
         coveredSpans.push([start, end]);
       }
     }
+    timing.regex_ms = +(performance.now() - t0).toFixed(2);
 
     // --- Pass 2: Local LLM (semantic/contextual PII, opt-in) ---
+    t0 = performance.now();
     if (this._llmDetector !== null) {
       const llmDetections = this._llmDetector.detect(text, coveredSpans);
       detections.push(...llmDetections);
     }
+    timing.llm_ms = +(performance.now() - t0).toFixed(2);
 
     // Sort by start position
     detections.sort((a, b) => a.start - b.start);
-    return detections;
+    return { detections, timing };
   }
 }
 

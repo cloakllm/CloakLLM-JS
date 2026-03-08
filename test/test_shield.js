@@ -16,7 +16,7 @@ function tmpDir() {
 describe('DetectionEngine', () => {
   it('detects emails', () => {
     const engine = new DetectionEngine(new ShieldConfig());
-    const detections = engine.detect('Contact john@example.com for info');
+    const { detections } = engine.detect('Contact john@example.com for info');
     assert.equal(detections.length, 1);
     assert.equal(detections[0].category, 'EMAIL');
     assert.equal(detections[0].text, 'john@example.com');
@@ -24,37 +24,37 @@ describe('DetectionEngine', () => {
 
   it('detects SSNs', () => {
     const engine = new DetectionEngine(new ShieldConfig());
-    const detections = engine.detect('SSN: 123-45-6789');
+    const { detections } = engine.detect('SSN: 123-45-6789');
     assert.ok(detections.some(d => d.category === 'SSN'));
   });
 
   it('detects credit cards', () => {
     const engine = new DetectionEngine(new ShieldConfig());
-    const detections = engine.detect('Card: 4111111111111111');
+    const { detections } = engine.detect('Card: 4111111111111111');
     assert.ok(detections.some(d => d.category === 'CREDIT_CARD'));
   });
 
   it('detects phone numbers', () => {
     const engine = new DetectionEngine(new ShieldConfig());
-    const detections = engine.detect('Call +1-555-0142');
+    const { detections } = engine.detect('Call +1-555-0142');
     assert.ok(detections.some(d => d.category === 'PHONE'));
   });
 
   it('detects IP addresses', () => {
     const engine = new DetectionEngine(new ShieldConfig());
-    const detections = engine.detect('Server at 192.168.1.1');
+    const { detections } = engine.detect('Server at 192.168.1.1');
     assert.ok(detections.some(d => d.category === 'IP_ADDRESS'));
   });
 
   it('detects API keys', () => {
     const engine = new DetectionEngine(new ShieldConfig());
-    const detections = engine.detect('Key: sk_live_abc123def456ghi789jkl012');
+    const { detections } = engine.detect('Key: sk_live_abc123def456ghi789jkl012');
     assert.ok(detections.some(d => d.category === 'API_KEY'));
   });
 
   it('detects multiple entities', () => {
     const engine = new DetectionEngine(new ShieldConfig());
-    const detections = engine.detect(
+    const { detections } = engine.detect(
       'Email john@test.com, SSN 123-45-6789, IP 10.0.0.1'
     );
     assert.ok(detections.length >= 3);
@@ -62,7 +62,7 @@ describe('DetectionEngine', () => {
 
   it('respects config flags', () => {
     const engine = new DetectionEngine(new ShieldConfig({ detectEmails: false }));
-    const detections = engine.detect('Email john@test.com');
+    const { detections } = engine.detect('Email john@test.com');
     assert.equal(detections.filter(d => d.category === 'EMAIL').length, 0);
   });
 
@@ -70,13 +70,13 @@ describe('DetectionEngine', () => {
     const engine = new DetectionEngine(new ShieldConfig({
       customPatterns: [{ name: 'CUSTOM_ID', pattern: 'CUST-\\d{6}' }],
     }));
-    const detections = engine.detect('Customer CUST-123456');
+    const { detections } = engine.detect('Customer CUST-123456');
     assert.ok(detections.some(d => d.category === 'CUSTOM_ID'));
   });
 
   it('handles overlapping detections', () => {
     const engine = new DetectionEngine(new ShieldConfig());
-    const detections = engine.detect('john@acme.com');
+    const { detections } = engine.detect('john@acme.com');
     // Should only detect once (email), not also as phone or other
     const emails = detections.filter(d => d.category === 'EMAIL');
     assert.equal(emails.length, 1);
@@ -84,7 +84,7 @@ describe('DetectionEngine', () => {
 
   it('returns detections sorted by start position', () => {
     const engine = new DetectionEngine(new ShieldConfig());
-    const detections = engine.detect('IP 10.0.0.1 and email a@b.com');
+    const { detections } = engine.detect('IP 10.0.0.1 and email a@b.com');
     for (let i = 1; i < detections.length; i++) {
       assert.ok(detections[i].start >= detections[i - 1].start);
     }
@@ -422,26 +422,26 @@ describe('V3: PHONE regex ReDoS resistance', () => {
     const engine = new DetectionEngine(new ShieldConfig());
     const adversarial = '9'.repeat(50) + 'X';
     const start = performance.now();
-    engine.detect(adversarial);
+    engine.detect(adversarial); // returns { detections, timing }
     const elapsed = performance.now() - start;
     assert.ok(elapsed < 1000, `Detection took ${elapsed}ms, expected < 1000ms`);
   });
 
   it('still detects +1-555-0142', () => {
     const engine = new DetectionEngine(new ShieldConfig());
-    const detections = engine.detect('Call +1-555-0142');
+    const { detections } = engine.detect('Call +1-555-0142');
     assert.ok(detections.some(d => d.category === 'PHONE'));
   });
 
   it('still detects (555) 123-4567', () => {
     const engine = new DetectionEngine(new ShieldConfig());
-    const detections = engine.detect('Call (555) 123-4567');
+    const { detections } = engine.detect('Call (555) 123-4567');
     assert.ok(detections.some(d => d.category === 'PHONE'));
   });
 
   it('still detects 555-123-4567', () => {
     const engine = new DetectionEngine(new ShieldConfig());
-    const detections = engine.detect('Call 555-123-4567');
+    const { detections } = engine.detect('Call 555-123-4567');
     assert.ok(detections.some(d => d.category === 'PHONE'));
   });
 });
@@ -456,7 +456,7 @@ describe('V5: Custom pattern ReDoS safety check', () => {
         customPatterns: [{ name: 'EVIL', pattern: '(a+)+$' }],
       }));
       // Pattern should have been skipped
-      const detections = engine.detect('aaaaaaaaaaaa');
+      const { detections } = engine.detect('aaaaaaaaaaaa');
       assert.ok(!detections.some(d => d.category === 'EVIL'));
       assert.ok(warnings.some(w => w.includes('safety check')));
     } finally {
@@ -468,7 +468,7 @@ describe('V5: Custom pattern ReDoS safety check', () => {
     const engine = new DetectionEngine(new ShieldConfig({
       customPatterns: [{ name: 'SAFE_ID', pattern: 'SAFE-\\d+' }],
     }));
-    const detections = engine.detect('See SAFE-12345');
+    const { detections } = engine.detect('See SAFE-12345');
     assert.ok(detections.some(d => d.category === 'SAFE_ID'));
   });
 });
@@ -573,7 +573,7 @@ describe('Custom pattern priority over built-ins', () => {
     const engine = new DetectionEngine(new ShieldConfig({
       customPatterns: [{ name: 'CASE_NUMBER', pattern: 'CASE-\\d{4}-\\d{4}' }],
     }));
-    const detections = engine.detect('Contact EMP-123456 about CASE-2024-0891');
+    const { detections } = engine.detect('Contact EMP-123456 about CASE-2024-0891');
     assert.ok(detections.some(d => d.category === 'CASE_NUMBER' && d.text === 'CASE-2024-0891'));
     assert.ok(!detections.some(d => d.category === 'PHONE' && d.text.includes('2024-0891')));
   });
@@ -887,6 +887,118 @@ describe('Batch operations', () => {
     shield.sanitize('Email john@acme.com');
     shield.sanitizeBatch(['SSN 123-45-6789', 'Phone 555-123-4567']);
     shield.desanitizeBatch(['test'], new TokenMap());
+    const { valid, errors } = shield.verifyAudit();
+    assert.ok(valid, `Chain errors: ${errors.join(', ')}`);
+  });
+});
+
+// ─── Metrics & Timing Tests ──────────────────────────────────────
+
+describe('Metrics & Timing', () => {
+  let logDir;
+
+  beforeEach(() => {
+    logDir = tmpDir();
+  });
+
+  afterEach(() => {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  });
+
+  it('audit entry includes timing object', () => {
+    const shield = new Shield(new ShieldConfig({ logDir }));
+    shield.sanitize('Email john@acme.com');
+    const files = fs.readdirSync(logDir).filter(f => f.endsWith('.jsonl'));
+    const content = fs.readFileSync(path.join(logDir, files[0]), 'utf-8');
+    const entry = JSON.parse(content.split('\n')[0]);
+    assert.ok('timing' in entry);
+    assert.ok('total_ms' in entry.timing);
+    assert.ok('detection_ms' in entry.timing);
+    assert.ok('regex_ms' in entry.timing);
+    assert.ok('tokenization_ms' in entry.timing);
+    assert.ok(entry.timing.total_ms >= 0);
+  });
+
+  it('desanitize audit entry includes timing', () => {
+    const shield = new Shield(new ShieldConfig({ logDir }));
+    const [, tokenMap] = shield.sanitize('Email john@acme.com');
+    shield.desanitize('[EMAIL_0]', tokenMap);
+    const files = fs.readdirSync(logDir).filter(f => f.endsWith('.jsonl'));
+    const content = fs.readFileSync(path.join(logDir, files[0]), 'utf-8');
+    const lines = content.split('\n').filter(l => l.trim());
+    const entry = JSON.parse(lines[1]);
+    assert.ok('timing' in entry);
+    assert.ok('total_ms' in entry.timing);
+    assert.ok('tokenization_ms' in entry.timing);
+  });
+
+  it('batch audit entry includes timing', () => {
+    const shield = new Shield(new ShieldConfig({ logDir }));
+    shield.sanitizeBatch(['Email john@acme.com', 'SSN 123-45-6789']);
+    const files = fs.readdirSync(logDir).filter(f => f.endsWith('.jsonl'));
+    const content = fs.readFileSync(path.join(logDir, files[0]), 'utf-8');
+    const entry = JSON.parse(content.split('\n')[0]);
+    assert.ok('timing' in entry);
+    assert.ok('detection_ms' in entry.timing);
+    assert.ok('regex_ms' in entry.timing);
+    assert.ok('tokenization_ms' in entry.timing);
+  });
+
+  it('metrics() accumulates across calls', () => {
+    const shield = new Shield(new ShieldConfig({ logDir, auditEnabled: false }));
+    shield.sanitize('Email john@acme.com');
+    shield.sanitize('SSN 123-45-6789');
+    const m = shield.metrics();
+    assert.equal(m.calls.sanitize, 2);
+    assert.ok(m.total_ms > 0);
+    assert.ok(m.avg_ms > 0);
+    assert.ok(m.entities_detected >= 2);
+    assert.ok('EMAIL' in m.categories);
+    assert.ok(m.detection.regex_ms >= 0);
+    assert.ok(m.tokenization_ms >= 0);
+  });
+
+  it('metrics() counts batch calls', () => {
+    const shield = new Shield(new ShieldConfig({ logDir, auditEnabled: false }));
+    shield.sanitizeBatch(['Email john@acme.com', 'SSN 123-45-6789']);
+    const m = shield.metrics();
+    assert.equal(m.calls.sanitizeBatch, 1);
+    assert.ok(m.entities_detected >= 2);
+  });
+
+  it('metrics() tracks desanitize', () => {
+    const shield = new Shield(new ShieldConfig({ logDir, auditEnabled: false }));
+    const [, tokenMap] = shield.sanitize('Email john@acme.com');
+    shield.desanitize('[EMAIL_0]', tokenMap);
+    const m = shield.metrics();
+    assert.equal(m.calls.desanitize, 1);
+  });
+
+  it('resetMetrics() clears all accumulators', () => {
+    const shield = new Shield(new ShieldConfig({ logDir, auditEnabled: false }));
+    shield.sanitize('Email john@acme.com');
+    shield.resetMetrics();
+    const m = shield.metrics();
+    assert.equal(m.calls.sanitize, 0);
+    assert.equal(m.total_ms, 0);
+    assert.equal(m.entities_detected, 0);
+    assert.deepEqual(m.categories, {});
+  });
+
+  it('detector returns timing dict', () => {
+    const engine = new DetectionEngine(new ShieldConfig());
+    const { timing } = engine.detect('Email john@acme.com');
+    assert.ok('regex_ms' in timing);
+    assert.ok('llm_ms' in timing);
+    assert.ok(typeof timing.regex_ms === 'number');
+  });
+
+  it('hash chain valid with timing field', () => {
+    const shield = new Shield(new ShieldConfig({ logDir }));
+    shield.sanitize('Email john@acme.com');
+    shield.sanitize('SSN 123-45-6789');
+    const [, tokenMap] = shield.sanitize('Phone 555-123-4567');
+    shield.desanitize('[PHONE_0]', tokenMap);
     const { valid, errors } = shield.verifyAudit();
     assert.ok(valid, `Chain errors: ${errors.join(', ')}`);
   });

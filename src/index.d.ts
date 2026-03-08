@@ -137,13 +137,46 @@ export class Shield {
     entities: Detection[];
   };
 
+  metrics(): Metrics;
+  resetMetrics(): void;
   verifyAudit(): { valid: boolean; errors: string[] };
   auditStats(): Record<string, any>;
 }
 
+export interface Timing {
+  total_ms: number;
+  detection_ms?: number;
+  regex_ms?: number;
+  llm_ms?: number;
+  tokenization_ms: number;
+}
+
+export interface DetectorTiming {
+  regex_ms: number;
+  llm_ms: number;
+}
+
+export interface Metrics {
+  calls: {
+    sanitize: number;
+    desanitize: number;
+    sanitizeBatch: number;
+    desanitizeBatch: number;
+  };
+  total_ms: number;
+  avg_ms: number;
+  detection: {
+    regex_ms: number;
+    llm_ms: number;
+  };
+  tokenization_ms: number;
+  entities_detected: number;
+  categories: Record<string, number>;
+}
+
 export class DetectionEngine {
   constructor(config: ShieldConfig);
-  detect(text: string): Detection[];
+  detect(text: string): { detections: Detection[]; timing: DetectorTiming };
 }
 
 export class Tokenizer {
@@ -166,6 +199,7 @@ export class AuditLogger {
     latencyMs?: number;
     mode?: string | null;
     entityDetails?: EntityDetail[];
+    timing?: Timing | null;
     metadata?: Record<string, any>;
   }): Record<string, any> | null;
   verifyChain(logFilePath?: string | null): { valid: boolean; errors: string[] };
