@@ -1003,3 +1003,40 @@ describe('Metrics & Timing', () => {
     assert.ok(valid, `Chain errors: ${errors.join(', ')}`);
   });
 });
+
+// ─── Custom LLM Categories E2E Test ─────────────────────────────
+
+describe('Custom LLM categories end-to-end', () => {
+  it('sanitize produces [PATIENT_ID_0] token with mocked LLM detector', () => {
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({
+        logDir,
+        auditEnabled: false,
+        llmDetection: true,
+        customLlmCategories: [{ name: 'PATIENT_ID', description: 'Hospital patient ID' }],
+      }));
+
+      // Mock the LLM detector's execFileSync
+      shield.detector._llmDetector._execFileSync = (cmd, args) => {
+        const url = args[args.length - 1];
+        if (url.includes('/api/tags')) return '200';
+        return JSON.stringify({
+          message: { content: JSON.stringify({ entities: [{ value: 'PAT-12345', category: 'PATIENT_ID' }] }) },
+        });
+      };
+
+      const [sanitized, tokenMap] = shield.sanitize('Patient PAT-12345 was admitted');
+      assert.ok(sanitized.includes('[PATIENT_ID_0]'), `Expected [PATIENT_ID_0] in: ${sanitized}`);
+      assert.ok(!sanitized.includes('PAT-12345'));
+      assert.equal(tokenMap.entityCount, 1);
+
+      // Desanitize round-trip
+      const restored = shield.desanitize('Record for [PATIENT_ID_0]', tokenMap);
+      assert.ok(restored.includes('PAT-12345'));
+      assert.ok(!restored.includes('[PATIENT_ID_0]'));
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+});

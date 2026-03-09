@@ -21,6 +21,8 @@ class ShieldConfig {
     this.detectIban = options.detectIban ?? true;
     /** @type {Array<{name: string, pattern: string}>} */
     this.customPatterns = options.customPatterns ?? [];
+    /** @type {Array<{name: string, description: string}>} */
+    this.customLlmCategories = options.customLlmCategories ?? [];
 
     // --- LLM Detection (Pass 2: local LLM via Ollama) ---
     this.llmDetection = options.llmDetection ??

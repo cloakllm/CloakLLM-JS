@@ -31,6 +31,12 @@ function makeDetector(mockFn) {
   return detector;
 }
 
+function makeDetectorWithConfig(configOverrides, mockFn) {
+  const detector = new LlmDetector(makeConfig(configOverrides));
+  detector._execFileSync = mockFn;
+  return detector;
+}
+
 // ─── Availability Tests ─────────────────────────────────────────
 
 describe('LlmDetector — availability', () => {
@@ -229,5 +235,93 @@ describe('LlmDetector — error handling', () => {
     });
     const results = detector.detect('Some text', []);
     assert.deepEqual(results, []);
+  });
+});
+
+// ─── Custom Categories Tests ─────────────────────────────────────
+
+describe('LlmDetector — custom categories', () => {
+  it('detects custom category from LLM response', () => {
+    const detector = makeDetectorWithConfig(
+      { customLlmCategories: [{ name: 'PATIENT_ID', description: 'Hospital patient ID' }] },
+      (cmd, args) => {
+        const url = args[args.length - 1];
+        if (url.includes('/api/tags')) return '200';
+        return ollamaResponse([{ value: 'PAT-12345', category: 'PATIENT_ID' }]);
+      }
+    );
+    const results = detector.detect('Patient PAT-12345 was admitted', []);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].category, 'PATIENT_ID');
+    assert.equal(results[0].text, 'PAT-12345');
+  });
+
+  it('prompt includes custom category name', () => {
+    const detector = new LlmDetector(makeConfig({
+      customLlmCategories: [{ name: 'PATIENT_ID', description: 'Hospital patient ID' }],
+    }));
+    const prompt = detector._systemPrompt();
+    assert.ok(prompt.includes('PATIENT_ID'));
+  });
+
+  it('category without description: in list but not in hints', () => {
+    const detector = new LlmDetector(makeConfig({
+      customLlmCategories: [{ name: 'CASE_NUMBER' }],
+    }));
+    const prompt = detector._systemPrompt();
+    assert.ok(prompt.includes('CASE_NUMBER'));
+    assert.ok(!prompt.includes('Category hints'));
+  });
+
+  it('excluded category (EMAIL) rejected with warning', () => {
+    const warnings = [];
+    const origWarn = console.warn;
+    console.warn = (msg) => warnings.push(msg);
+    try {
+      const detector = new LlmDetector(makeConfig({
+        customLlmCategories: [{ name: 'EMAIL', description: 'Custom email' }],
+      }));
+      assert.ok(!detector._customCategories.has('EMAIL'));
+      assert.ok(warnings.some(w => w.includes('conflicts')));
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+
+  it('custom + built-in coexist', () => {
+    const detector = makeDetectorWithConfig(
+      { customLlmCategories: [{ name: 'PATIENT_ID', description: 'Hospital patient ID' }] },
+      (cmd, args) => {
+        const url = args[args.length - 1];
+        if (url.includes('/api/tags')) return '200';
+        return ollamaResponse([
+          { value: 'PAT-12345', category: 'PATIENT_ID' },
+          { value: '742 Evergreen Terrace', category: 'ADDRESS' },
+        ]);
+      }
+    );
+    const text = 'Patient PAT-12345 lives at 742 Evergreen Terrace';
+    const results = detector.detect(text, []);
+    assert.equal(results.length, 2);
+    const cats = new Set(results.map(r => r.category));
+    assert.ok(cats.has('PATIENT_ID'));
+    assert.ok(cats.has('ADDRESS'));
+  });
+
+  it('unknown category from LLM filtered out', () => {
+    const detector = makeDetectorWithConfig(
+      { customLlmCategories: [{ name: 'PATIENT_ID', description: 'Hospital patient ID' }] },
+      (cmd, args) => {
+        const url = args[args.length - 1];
+        if (url.includes('/api/tags')) return '200';
+        return ollamaResponse([
+          { value: 'PAT-12345', category: 'PATIENT_ID' },
+          { value: '1990-01-15', category: 'INVENTED_CATEGORY' },
+        ]);
+      }
+    );
+    const results = detector.detect('Patient PAT-12345 born 1990-01-15', []);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].category, 'PATIENT_ID');
   });
 });

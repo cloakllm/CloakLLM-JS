@@ -5,6 +5,16 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-03-09
+
+### Added
+
+- Custom LLM detection categories: `new ShieldConfig({ customLlmCategories: [{ name: 'PATIENT_ID', description: 'Hospital patient ID' }] })` — define domain-specific semantic PII types for Ollama-based detection
+- Excluded category conflict detection with console warnings
+- Category description hints injected into Ollama system prompt
+- TypeScript type: `customLlmCategories` in `ShieldConfigOptions`
+- New tests for custom LLM categories (total: 120 tests)
+
 ## [0.1.9] - 2026-03-08
 
 ### Added
@@ -99,6 +109,7 @@ versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Zero runtime dependencies — uses only Node.js builtins
 - Test suite with 50 tests covering detection, tokenization, audit chain, and end-to-end flows
 
+[0.2.0]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.2.0
 [0.1.9]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.9
 [0.1.8]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.8
 [0.1.7]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.7

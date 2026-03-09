@@ -11,6 +11,7 @@ export interface ShieldConfigOptions {
   detectIpAddresses?: boolean;
   detectIban?: boolean;
   customPatterns?: Array<{ name: string; pattern: string }>;
+  customLlmCategories?: Array<{ name: string; description?: string }>;
   llmDetection?: boolean;
   llmModel?: string;
   llmOllamaUrl?: string;
@@ -35,6 +36,7 @@ export class ShieldConfig {
   detectIpAddresses: boolean;
   detectIban: boolean;
   customPatterns: Array<{ name: string; pattern: string }>;
+  customLlmCategories: Array<{ name: string; description?: string }>;
   llmDetection: boolean;
   llmModel: string;
   llmOllamaUrl: string;

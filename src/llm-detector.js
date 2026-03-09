@@ -36,8 +36,25 @@ class LlmDetector {
     this._available = null;
     /** @type {Map<string, Array<{value: string, category: string}>>} */
     this._cache = new Map();
+    /** @type {Map<string, string>} Custom LLM categories: name → description */
+    this._customCategories = new Map();
+    for (const { name, description = '' } of (config.customLlmCategories ?? [])) {
+      if (EXCLUDED_CATEGORIES.has(name)) {
+        console.warn(`CloakLLM: Custom LLM category '${name}' conflicts with excluded category — skipped`);
+        continue;
+      }
+      this._customCategories.set(name, description);
+    }
     /** @type {Function} Overridable for testing */
     this._execFileSync = cp.execFileSync;
+  }
+
+  get _effectiveCategories() {
+    const cats = new Set(LLM_CATEGORIES);
+    for (const name of this._customCategories.keys()) {
+      cats.add(name);
+    }
+    return cats;
   }
 
   _checkAvailable() {
@@ -57,9 +74,9 @@ class LlmDetector {
   }
 
   _systemPrompt() {
-    const cats = [...LLM_CATEGORIES].sort().join(', ');
+    const cats = [...this._effectiveCategories].sort().join(', ');
     const excluded = [...EXCLUDED_CATEGORIES].sort().join(', ');
-    return (
+    let prompt = (
       'You are a PII detection engine. Given text, extract sensitive entities.\n' +
       `Return ONLY entities in these categories: ${cats}\n` +
       `Do NOT detect: ${excluded} (already handled by other systems).\n` +
@@ -70,6 +87,16 @@ class LlmDetector {
       '- If no entities found, return {"entities": []}\n' +
       '- Only return high-confidence detections'
     );
+    const hints = [...this._customCategories.entries()]
+      .filter(([, desc]) => desc)
+      .sort(([a], [b]) => a.localeCompare(b));
+    if (hints.length > 0) {
+      prompt += '\nCategory hints:';
+      for (const [name, desc] of hints) {
+        prompt += `\n- ${name}: ${desc}`;
+      }
+    }
+    return prompt;
   }
 
   _buildPrompt(text) {
@@ -141,7 +168,7 @@ class LlmDetector {
       const category = (ent.category ?? '').toUpperCase();
 
       if (value.length < 2) continue;
-      if (!LLM_CATEGORIES.has(category)) continue;
+      if (!this._effectiveCategories.has(category)) continue;
 
       // Find all occurrences in text
       const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
