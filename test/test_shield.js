@@ -1040,3 +1040,153 @@ describe('Custom LLM categories end-to-end', () => {
     }
   });
 });
+
+// ─── Entity Hashing Tests ─────────────────────────────────────────
+
+describe('Entity Hashing', () => {
+  it('hash disabled by default', () => {
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ logDir }));
+      const [, tokenMap] = shield.sanitize('Contact john@acme.com');
+      for (const detail of tokenMap.entityDetails) {
+        assert.equal(detail.entity_hash, undefined);
+      }
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('hash enabled produces 64-char hex', () => {
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({
+        logDir,
+        entityHashing: true,
+        entityHashKey: 'test-key',
+      }));
+      const [, tokenMap] = shield.sanitize('Contact john@acme.com');
+      assert.ok(tokenMap.entityDetails.length >= 1);
+      for (const detail of tokenMap.entityDetails) {
+        assert.ok(detail.entity_hash);
+        assert.equal(detail.entity_hash.length, 64);
+        assert.ok(/^[0-9a-f]{64}$/.test(detail.entity_hash));
+      }
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('hash is deterministic', () => {
+    const logDir = tmpDir();
+    try {
+      const s1 = new Shield(new ShieldConfig({ logDir, entityHashing: true, entityHashKey: 'stable-key' }));
+      const [, tm1] = s1.sanitize('Contact john@acme.com');
+
+      const s2 = new Shield(new ShieldConfig({ logDir, entityHashing: true, entityHashKey: 'stable-key' }));
+      const [, tm2] = s2.sanitize('Contact john@acme.com');
+
+      const h1 = tm1.entityDetails.map(d => d.entity_hash);
+      const h2 = tm2.entityDetails.map(d => d.entity_hash);
+      assert.deepEqual(h1, h2);
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('category prefix prevents collision', () => {
+    const tm = new TokenMap({ entityHashing: true, entityHashKey: 'test-key' });
+    const hashPerson = tm._computeEntityHash('PERSON', 'john');
+    const hashOrg = tm._computeEntityHash('ORG', 'john');
+    assert.notEqual(hashPerson, hashOrg);
+  });
+
+  it('normalization (case/whitespace insensitive)', () => {
+    const tm = new TokenMap({ entityHashing: true, entityHashKey: 'test-key' });
+    const h1 = tm._computeEntityHash('EMAIL', 'John@Acme.com');
+    const h2 = tm._computeEntityHash('EMAIL', '  john@acme.com  ');
+    assert.equal(h1, h2);
+  });
+
+  it('auto-generates key when empty', () => {
+    const logDir = tmpDir();
+    try {
+      const config = new ShieldConfig({ logDir, entityHashing: true });
+      const shield = new Shield(config);
+      assert.ok(shield.config.entityHashKey.length === 64); // 32 bytes hex
+      const [, tokenMap] = shield.sanitize('Contact john@acme.com');
+      assert.ok(tokenMap.entityDetails.some(d => d.entity_hash));
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('works in redact mode', () => {
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({
+        logDir,
+        mode: 'redact',
+        entityHashing: true,
+        entityHashKey: 'test-key',
+      }));
+      const [, tokenMap] = shield.sanitize('Contact john@acme.com');
+      assert.ok(tokenMap.entityDetails.length >= 1);
+      for (const d of tokenMap.entityDetails) {
+        assert.ok(d.entity_hash);
+        assert.ok(d.token.endsWith('_REDACTED]'));
+      }
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('audit chain remains valid', () => {
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({
+        logDir,
+        entityHashing: true,
+        entityHashKey: 'test-key',
+      }));
+      shield.sanitize('Contact john@acme.com');
+      shield.sanitize('Call +1-555-0142');
+      const { valid, errors } = shield.verifyAudit();
+      assert.ok(valid, `Audit chain errors: ${errors}`);
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('batch includes hash with text_index', () => {
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({
+        logDir,
+        entityHashing: true,
+        entityHashKey: 'test-key',
+      }));
+      const [, tokenMap] = shield.sanitizeBatch(['Email john@acme.com', 'Call +1-555-0142']);
+      const details = tokenMap.entityDetails;
+      assert.ok(details.length >= 2);
+      for (const d of details) {
+        assert.ok(d.entity_hash);
+      }
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('cross-SDK known-value parity', () => {
+    const crypto = require('crypto');
+    const key = 'test-key';
+    const category = 'EMAIL';
+    const text = 'john@acme.com';
+    const message = `${category}:${text.trim().toLowerCase()}`;
+    const expected = crypto.createHmac('sha256', key).update(message).digest('hex');
+
+    const tm = new TokenMap({ entityHashing: true, entityHashKey: key });
+    const actual = tm._computeEntityHash(category, text);
+    assert.equal(actual, expected);
+  });
+});

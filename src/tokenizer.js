@@ -6,6 +6,8 @@
  * Tokens are descriptive: [PERSON_0], [EMAIL_1], etc.
  */
 
+const crypto = require('crypto');
+
 const TOKEN_PATTERN = /\[([A-Z_]+_\d+)\]/g;
 const ESCAPED_OPEN = '\uFF3B';
 const ESCAPED_CLOSE = '\uFF3D';
@@ -16,7 +18,7 @@ class TokenMap {
    * @param {Object} [options]
    * @param {string} [options.mode] - "tokenize" or "redact"
    */
-  constructor({ mode = 'tokenize' } = {}) {
+  constructor({ mode = 'tokenize', entityHashing = false, entityHashKey = '' } = {}) {
     /** @type {Map<string, string>} original -> token */
     this.forward = new Map();
     /** @type {Map<string, string>} token -> original */
@@ -27,6 +29,22 @@ class TokenMap {
     this.detections = [];
     /** @type {string} */
     this.mode = mode;
+    /** @type {boolean} */
+    this.entityHashing = entityHashing;
+    /** @type {string} */
+    this.entityHashKey = entityHashKey;
+  }
+
+  /**
+   * Compute HMAC-SHA256 hash: HMAC(key, "CATEGORY:normalized").
+   * @param {string} category
+   * @param {string} originalText
+   * @returns {string} 64-char hex hash
+   */
+  _computeEntityHash(category, originalText) {
+    const normalized = originalText.trim().toLowerCase();
+    const message = `${category}:${normalized}`;
+    return crypto.createHmac('sha256', this.entityHashKey).update(message).digest('hex');
   }
 
   /**
@@ -77,7 +95,7 @@ class TokenMap {
         const key = det.text.trim();
         token = this.forward.get(key) ?? '';
       }
-      details.push({
+      const detail = {
         category: det.category,
         start: det.start,
         end: det.end,
@@ -85,7 +103,11 @@ class TokenMap {
         confidence: det.confidence,
         source: det.source,
         token,
-      });
+      };
+      if (this.entityHashing && this.entityHashKey) {
+        detail.entity_hash = this._computeEntityHash(det.category, det.text);
+      }
+      details.push(detail);
     }
     details.sort((a, b) => a.start - b.start);
     return details;

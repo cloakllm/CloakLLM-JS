@@ -19,6 +19,8 @@ export interface ShieldConfigOptions {
   llmConfidence?: number;
   mode?: 'tokenize' | 'redact';
   descriptiveTokens?: boolean;
+  entityHashing?: boolean;
+  entityHashKey?: string;
   auditEnabled?: boolean;
   logDir?: string;
   logOriginalValues?: boolean;
@@ -44,6 +46,8 @@ export class ShieldConfig {
   llmConfidence: number;
   mode: 'tokenize' | 'redact';
   descriptiveTokens: boolean;
+  entityHashing: boolean;
+  entityHashKey: string;
   auditEnabled: boolean;
   logDir: string;
   logOriginalValues: boolean;
@@ -68,6 +72,7 @@ export interface EntityDetail {
   confidence: number;
   source: string;
   token: string;
+  entity_hash?: string;
 }
 
 export interface BatchEntityDetail extends EntityDetail {
@@ -75,11 +80,13 @@ export interface BatchEntityDetail extends EntityDetail {
 }
 
 export class TokenMap {
-  constructor(options?: { mode?: 'tokenize' | 'redact' });
+  constructor(options?: { mode?: 'tokenize' | 'redact'; entityHashing?: boolean; entityHashKey?: string });
   forward: Map<string, string>;
   reverse: Map<string, string>;
   detections: Detection[];
   mode: 'tokenize' | 'redact';
+  entityHashing: boolean;
+  entityHashKey: string;
   readonly entityCount: number;
   readonly categories: Record<string, number>;
   readonly entityDetails: EntityDetail[];

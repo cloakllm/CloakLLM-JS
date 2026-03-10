@@ -5,6 +5,17 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-03-10
+
+### Added
+
+- Per-entity HMAC hashing: `new ShieldConfig({ entityHashing: true, entityHashKey: "..." })` generates deterministic HMAC-SHA256 hashes per detected entity
+- Hash included in `entityDetails` as `entity_hash` field
+- Auto-generates random 32-byte hex key if enabled but no key provided
+- TypeScript types updated: `entityHashing`, `entityHashKey` in config, `entity_hash` in `EntityDetail`
+- Works with both `tokenize` and `redact` modes, and with `sanitizeBatch`
+- 10 new tests for entity hashing (total: 130 tests)
+
 ## [0.2.0] - 2026-03-09
 
 ### Added
@@ -109,6 +120,7 @@ versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Zero runtime dependencies — uses only Node.js builtins
 - Test suite with 50 tests covering detection, tokenization, audit chain, and end-to-end flows
 
+[0.2.1]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.2.1
 [0.2.0]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.2.0
 [0.1.9]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.9
 [0.1.8]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.8

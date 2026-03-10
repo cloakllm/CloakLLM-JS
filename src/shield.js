@@ -12,6 +12,7 @@
  *   const clean = shield.desanitize(responseText, tokenMap);
  */
 
+const crypto = require('crypto');
 const { ShieldConfig } = require('./config');
 const { DetectionEngine } = require('./detector');
 const { Tokenizer, TokenMap } = require('./tokenizer');
@@ -27,6 +28,10 @@ class Shield {
     this.tokenizer = new Tokenizer(this.config);
     this.audit = new AuditLogger(this.config);
     this._metrics = Shield._emptyMetrics();
+    // Auto-generate entity hash key if hashing enabled but no key provided
+    if (this.config.entityHashing && !this.config.entityHashKey) {
+      this.config.entityHashKey = crypto.randomBytes(32).toString('hex');
+    }
   }
 
   static _emptyMetrics() {
@@ -72,7 +77,11 @@ class Shield {
 
     // Ensure token_map has the correct mode
     if (!tokenMap) {
-      tokenMap = new TokenMap({ mode: this.config.mode });
+      tokenMap = new TokenMap({
+        mode: this.config.mode,
+        entityHashing: this.config.entityHashing,
+        entityHashKey: this.config.entityHashKey,
+      });
     }
 
     t0 = performance.now();
@@ -175,7 +184,11 @@ class Shield {
     const startTime = performance.now();
 
     if (!tokenMap) {
-      tokenMap = new TokenMap({ mode: this.config.mode });
+      tokenMap = new TokenMap({
+        mode: this.config.mode,
+        entityHashing: this.config.entityHashing,
+        entityHashKey: this.config.entityHashKey,
+      });
     }
 
     const sanitizedTexts = [];
@@ -211,7 +224,7 @@ class Shield {
           const key = det.text.trim();
           token = tokenMap.forward.get(key) || '';
         }
-        allEntityDetails.push({
+        const detail = {
           category: det.category,
           start: det.start,
           end: det.end,
@@ -220,7 +233,11 @@ class Shield {
           source: det.source,
           token,
           text_index: textIndex,
-        });
+        };
+        if (tokenMap.entityHashing && tokenMap.entityHashKey) {
+          detail.entity_hash = tokenMap._computeEntityHash(det.category, det.text);
+        }
+        allEntityDetails.push(detail);
       }
     }
 

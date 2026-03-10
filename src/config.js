@@ -39,6 +39,11 @@ class ShieldConfig {
     }
     this.descriptiveTokens = options.descriptiveTokens ?? true;
 
+    // --- Entity Hashing ---
+    this.entityHashing = options.entityHashing ??
+      (process.env.CLOAKLLM_ENTITY_HASHING ?? 'false').toLowerCase() === 'true';
+    this.entityHashKey = options.entityHashKey ?? process.env.CLOAKLLM_ENTITY_HASH_KEY ?? '';
+
     // --- Audit Logging ---
     this.auditEnabled = options.auditEnabled ?? true;
     this.logDir = options.logDir ?? process.env.CLOAKLLM_LOG_DIR ?? './cloakllm_audit';
