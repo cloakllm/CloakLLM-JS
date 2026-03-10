@@ -1,6 +1,6 @@
 {
   "name": "cloakllm",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "PII cloaking and tamper-evident audit logs for LLM API calls. EU AI Act Article 12 compliance.",
   "main": "src/index.js",
   "types": "src/index.d.ts",

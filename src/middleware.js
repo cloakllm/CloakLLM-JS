@@ -28,8 +28,8 @@ const _activeMaps = new Map();
 /** @type {WeakMap<Object, Function>} client -> original create function */
 const _originalFunctions = new WeakMap();
 
-/** @type {Set<Object>} */
-const _patchedClients = new Set();
+/** @type {WeakSet<Object>} */
+const _patchedClients = new WeakSet();
 
 /**
  * Sanitize messages array, inject system prompt hint.
@@ -137,7 +137,11 @@ function enable(client, config = null) {
     );
   }
 
-  if (!_shield) {
+  if (_shield) {
+    if (config) {
+      console.warn('CloakLLM: enable() called again — existing config unchanged. Call disable() first to reconfigure.');
+    }
+  } else {
     _shield = new Shield(config || new ShieldConfig());
   }
 
@@ -215,13 +219,16 @@ function enable(client, config = null) {
         return bufferAndDesanitize(response);
       }
 
-      // Desanitize non-streaming response
+      // Desanitize non-streaming response (all choices share the same token map)
       if (callKey && !_shouldSkip(model) && response?.choices) {
-        for (const choice of response.choices) {
-          if (choice?.message?.content) {
-            choice.message.content = _desanitizeResponse(
-              choice.message.content, model, callKey
-            );
+        const tokenMap = _activeMaps.get(callKey);
+        _activeMaps.delete(callKey);
+        callKey = ''; // consumed — cleanup handled above
+        if (tokenMap && tokenMap.entityCount > 0) {
+          for (const choice of response.choices) {
+            if (choice?.message?.content) {
+              choice.message.content = _shield.desanitize(choice.message.content, tokenMap, { model });
+            }
           }
         }
       }
@@ -234,6 +241,7 @@ function enable(client, config = null) {
   };
 
   _patchedClients.add(client);
+  _clientRefs.add(client);
   _enabled = true;
 
   _shield.audit.log({
@@ -249,8 +257,11 @@ function enable(client, config = null) {
  * Disable CloakLLM and restore original functions.
  * @param {Object} [client] - Specific client, or all clients
  */
+/** @type {Set<Object>} Track clients for disable() iteration */
+const _clientRefs = new Set();
+
 function disable(client = null) {
-  const clients = client ? [client] : [..._patchedClients];
+  const clients = client ? [client] : [..._clientRefs];
 
   for (const c of clients) {
     const original = _originalFunctions.get(c);
@@ -259,9 +270,10 @@ function disable(client = null) {
     }
     _originalFunctions.delete(c);
     _patchedClients.delete(c);
+    _clientRefs.delete(c);
   }
 
-  if (_patchedClients.size === 0) {
+  if (_clientRefs.size === 0) {
     if (_shield) {
       _shield.audit.log({ eventType: 'shield_disabled' });
     }

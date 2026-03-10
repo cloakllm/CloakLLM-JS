@@ -139,7 +139,7 @@ class DetectionEngine {
 
         // Skip short phone-like matches
         if (name === 'PHONE') {
-          const digits = match[0].replace(/[-.\s()]/g, '');
+          const digits = match[0].replace(/[-.\s()+]/g, '');
           if (digits.length < 7) continue;
         }
 

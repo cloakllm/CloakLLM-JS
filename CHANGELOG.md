@@ -5,6 +5,18 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-03-10
+
+### Fixed
+
+- **[SECURITY]** Multi-choice desanitization in OpenAI middleware — `_activeMaps.delete()` on first choice caused remaining choices to skip desanitization
+- `enable()` silently ignoring new config on second call — now warns to call `disable()` first
+- LLM detector `_checkAvailable()` not validating HTTP status code — curl exit 0 on 404/500 caused false availability
+- LLM detector hardcoded `/dev/null` — now uses `NUL` on Windows for cross-platform support
+- LLM detector `.sort()` mutating cached entities array — now copies before sorting
+- PHONE filter not stripping `+` from digit count — `+` now excluded from minimum length check
+- `_patchedClients` Set preventing garbage collection of discarded clients — changed to WeakSet
+
 ## [0.2.1] - 2026-03-10
 
 ### Added
@@ -120,6 +132,7 @@ versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Zero runtime dependencies — uses only Node.js builtins
 - Test suite with 50 tests covering detection, tokenization, audit chain, and end-to-end flows
 
+[0.2.2]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.2.2
 [0.2.1]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.2.1
 [0.2.0]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.2.0
 [0.1.9]: https://github.com/cloakllm/CloakLLM-JS/releases/tag/v0.1.9

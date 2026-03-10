@@ -60,12 +60,17 @@ class LlmDetector {
   _checkAvailable() {
     if (this._available !== null) return this._available;
     try {
-      this._execFileSync('curl', [
-        '-s', '-o', '/dev/null', '-w', '%{http_code}',
+      const nullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null';
+      const stdout = this._execFileSync('curl', [
+        '-s', '-o', nullDevice, '-w', '%{http_code}',
         '--max-time', '3',
         `${this._baseUrl}/api/tags`,
       ], { encoding: 'utf-8', timeout: 5000 });
-      this._available = true;
+      const statusCode = parseInt(stdout.trim(), 10);
+      this._available = statusCode >= 200 && statusCode < 300;
+      if (!this._available) {
+        console.warn(`CloakLLM: Ollama returned HTTP ${statusCode} at ${this._baseUrl} — LLM detection disabled`);
+      }
     } catch {
       console.warn(`CloakLLM: Ollama not available at ${this._baseUrl} — LLM detection disabled`);
       this._available = false;
@@ -159,8 +164,8 @@ class LlmDetector {
       this._cache.set(text, entities);
     }
 
-    // Sort by value length desc (longer matches first)
-    entities.sort((a, b) => (b.value?.length ?? 0) - (a.value?.length ?? 0));
+    // Sort by value length desc (longer matches first) — copy to avoid mutating cached array
+    entities = [...entities].sort((a, b) => (b.value?.length ?? 0) - (a.value?.length ?? 0));
 
     const detections = [];
     for (const ent of entities) {
