@@ -18,8 +18,8 @@
 const { ShieldConfig } = require('./config');
 const { Shield } = require('./shield');
 
-/** @type {WeakMap<Object, import('./tokenizer').TokenMap>} */
-const _tokenMaps = new WeakMap();
+/** Symbol key for attaching token maps to params objects (survives spread/copy) */
+const _TOKEN_MAP_KEY = Symbol.for('cloakllm.tokenMap');
 
 const TOKEN_HINT =
   'This conversation contains placeholders like [PERSON_0], [EMAIL_0], [ORG_0], etc. ' +
@@ -119,11 +119,12 @@ function createCloakLLMMiddleware(config) {
         modelId
       );
 
-      // Create a new params object so WeakMap key is unique per call
       const newParams = { ...params, prompt: sanitizedPrompt };
 
       if (tokenMap && tokenMap.entityCount > 0) {
-        _tokenMaps.set(newParams, tokenMap);
+        // Attach token map directly via Symbol — survives spread/copy
+        // unlike WeakMap which requires exact object identity
+        newParams[_TOKEN_MAP_KEY] = tokenMap;
       }
 
       return newParams;
@@ -134,7 +135,7 @@ function createCloakLLMMiddleware(config) {
      */
     wrapGenerate: async ({ doGenerate, params, model }) => {
       const result = await doGenerate();
-      const tokenMap = _tokenMaps.get(params);
+      const tokenMap = params[_TOKEN_MAP_KEY];
 
       if (!tokenMap) return result;
 
@@ -173,7 +174,7 @@ function createCloakLLMMiddleware(config) {
      */
     wrapStream: async ({ doStream, params, model }) => {
       const result = await doStream();
-      const tokenMap = _tokenMaps.get(params);
+      const tokenMap = params[_TOKEN_MAP_KEY];
 
       if (!tokenMap) return result;
 
