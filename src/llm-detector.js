@@ -23,6 +23,42 @@ const EXCLUDED_CATEGORIES = new Set([
   'API_KEY', 'IBAN', 'JWT',
 ]);
 
+class BoundedCache {
+  constructor(maxSize = 1024) {
+    this._cache = new Map();
+    this._maxSize = maxSize;
+  }
+
+  get(key) {
+    if (!this._cache.has(key)) return undefined;
+    const value = this._cache.get(key);
+    this._cache.delete(key);
+    this._cache.set(key, value);
+    return value;
+  }
+
+  set(key, value) {
+    if (this._cache.has(key)) this._cache.delete(key);
+    this._cache.set(key, value);
+    if (this._cache.size > this._maxSize) {
+      const oldest = this._cache.keys().next().value;
+      this._cache.delete(oldest);
+    }
+  }
+
+  has(key) {
+    return this._cache.has(key);
+  }
+
+  clear() {
+    this._cache.clear();
+  }
+
+  get size() {
+    return this._cache.size;
+  }
+}
+
 class LlmDetector {
   /**
    * @param {import('./config').ShieldConfig} config
@@ -34,8 +70,8 @@ class LlmDetector {
     this._confidence = config.llmConfidence;
     /** @type {boolean|null} null = not checked yet */
     this._available = null;
-    /** @type {Map<string, Array<{value: string, category: string}>>} */
-    this._cache = new Map();
+    /** @type {BoundedCache} LRU cache with max 1024 entries */
+    this._cache = new BoundedCache(1024);
     /** @type {Map<string, string>} Custom LLM categories: name → description */
     this._customCategories = new Map();
     for (const { name, description = '' } of (config.customLlmCategories ?? [])) {
@@ -202,4 +238,4 @@ class LlmDetector {
   }
 }
 
-module.exports = { LlmDetector };
+module.exports = { LlmDetector, BoundedCache };

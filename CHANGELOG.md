@@ -5,6 +5,12 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-03-15
+
+### Fixed
+
+- LLM detector unbounded cache — replaced plain `Map` with `BoundedCache` (LRU, maxSize=1024) to prevent memory leaks in long-running services
+
 ## [0.2.3] - 2026-03-13
 
 ### Fixed
