@@ -19,6 +19,7 @@ const { ShieldConfig } = require('./config');
 const { TokenMap, Tokenizer } = require('./tokenizer');
 const { DetectionEngine } = require('./detector');
 const { AuditLogger } = require('./audit');
+const { StreamDesanitizer } = require('./stream');
 const { enable, disable, getShield, isEnabled } = require('./middleware');
 const { createCloakLLMMiddleware } = require('./vercel-middleware');
 
@@ -29,6 +30,7 @@ module.exports = {
   Tokenizer,
   DetectionEngine,
   AuditLogger,
+  StreamDesanitizer,
   enable,
   disable,
   getShield,

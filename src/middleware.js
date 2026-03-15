@@ -15,6 +15,7 @@ const path = require('path');
 const { version: PKG_VERSION } = require(path.join(__dirname, '..', 'package.json'));
 const { ShieldConfig } = require('./config');
 const { Shield } = require('./shield');
+const { StreamDesanitizer } = require('./stream');
 const { TokenMap } = require('./tokenizer');
 const crypto = require('crypto');
 
@@ -163,60 +164,71 @@ function enable(client, config = null) {
     try {
       const response = await originalCreate(params, ...rest);
 
-      // Handle streaming responses: buffer all chunks, then desanitize the
-      // full assembled text before yielding a single final chunk.
-      // Trade-off: no incremental streaming UX, but guarantees correct
-      // desanitization. A partial-flush approach can be added later.
+      // Handle streaming responses: incrementally desanitize tokens as they arrive.
+      // Uses StreamDesanitizer state machine to emit text as soon as it's safe,
+      // buffering only when a potential token boundary is encountered.
       if (params.stream) {
         if (!callKey || _shouldSkip(model)) return response;
 
         const streamCallKey = callKey;
         callKey = ''; // let the generator own cleanup
 
-        async function* bufferAndDesanitize(stream) {
-          try {
-            let buffer = '';
-            let lastChunk = null;
+        async function* incrementalDesanitize(stream) {
+          const tokenMap = _activeMaps.get(streamCallKey);
+          _activeMaps.delete(streamCallKey);
 
+          if (!tokenMap || tokenMap.entityCount === 0) {
+            yield* stream;
+            return;
+          }
+
+          const desan = new StreamDesanitizer(tokenMap);
+
+          try {
             for await (const chunk of stream) {
-              lastChunk = chunk;
               const delta = chunk.choices?.[0]?.delta;
               if (delta?.content) {
-                buffer += delta.content;
+                const output = desan.feed(delta.content);
+                if (output) {
+                  yield {
+                    ...chunk,
+                    choices: [{
+                      ...chunk.choices[0],
+                      delta: { ...chunk.choices[0].delta, content: output },
+                    }],
+                  };
+                }
+              } else {
+                yield chunk;
               }
 
-              const finishReason = chunk.choices?.[0]?.finish_reason;
-              if (finishReason) {
-                // Desanitize the full buffered response
-                const desanitized = _desanitizeResponse(buffer, model, streamCallKey);
-                yield {
-                  ...chunk,
-                  choices: [{
-                    ...chunk.choices[0],
-                    delta: { ...chunk.choices[0].delta, content: desanitized },
-                  }],
-                };
-                return;
+              if (chunk.choices?.[0]?.finish_reason) {
+                const flushed = desan.flush();
+                if (flushed) {
+                  yield {
+                    ...chunk,
+                    choices: [{
+                      ...chunk.choices[0],
+                      delta: { content: flushed },
+                      finish_reason: null,
+                    }],
+                  };
+                }
               }
             }
 
-            // Stream ended without finish_reason — emit whatever we have
-            if (buffer && lastChunk) {
-              const desanitized = _desanitizeResponse(buffer, model, streamCallKey);
-              yield {
-                ...lastChunk,
-                choices: [{
-                  ...lastChunk.choices[0],
-                  delta: { content: desanitized },
-                }],
-              };
+            // Stream ended without finish_reason — flush remainder
+            const flushed = desan.flush();
+            if (flushed) {
+              yield { choices: [{ delta: { content: flushed } }] };
             }
-          } finally {
-            _activeMaps.delete(streamCallKey);
+          } catch (err) {
+            desan.flush();
+            throw err;
           }
         }
 
-        return bufferAndDesanitize(response);
+        return incrementalDesanitize(response);
       }
 
       // Desanitize non-streaming response (all choices share the same token map)

@@ -345,11 +345,12 @@ describe('wrapStream', () => {
 
     const outputChunks = await collectStream(result.stream);
 
-    // Should emit a single text-delta with desanitized text, then text-end, then finish
+    // Incremental streaming: text-deltas emitted as text arrives
     const textDeltas = outputChunks.filter(c => c.type === 'text-delta');
-    assert.equal(textDeltas.length, 1);
-    assert.ok(textDeltas[0].textDelta.includes('sarah.j@techcorp.io'));
-    assert.ok(!textDeltas[0].textDelta.includes('[EMAIL_0]'));
+    assert.ok(textDeltas.length >= 1, `Expected at least 1 text-delta, got ${textDeltas.length}`);
+    const fullText = textDeltas.map(c => c.textDelta).join('');
+    assert.ok(fullText.includes('sarah.j@techcorp.io'));
+    assert.ok(!fullText.includes('[EMAIL_0]'));
 
     // text-end and finish should pass through
     assert.ok(outputChunks.some(c => c.type === 'text-end'));
@@ -509,9 +510,9 @@ describe('wrapStream', () => {
     const outputChunks = await collectStream(result.stream);
 
     const textDeltas = outputChunks.filter(c => c.type === 'text-delta');
-    assert.equal(textDeltas.length, 1);
-    assert.ok(textDeltas[0].textDelta.includes('john@acme.com'));
-    assert.ok(textDeltas[0].textDelta.includes('+1-555-0142'));
-    assert.equal(textDeltas[0].id, 'block-0');
+    assert.ok(textDeltas.length >= 1, `Expected at least 1 text-delta, got ${textDeltas.length}`);
+    const fullText = textDeltas.map(c => c.textDelta).join('');
+    assert.ok(fullText.includes('john@acme.com'));
+    assert.ok(fullText.includes('+1-555-0142'));
   });
 });

@@ -194,6 +194,14 @@ export class Tokenizer {
   detokenize(text: string, tokenMap: TokenMap): string;
 }
 
+export class StreamDesanitizer {
+  constructor(tokenMap: TokenMap);
+  /** Feed a chunk of text; returns text safe to emit (may be empty if buffering). */
+  feed(chunk: string): string;
+  /** Flush any remaining buffered text at end of stream. */
+  flush(): string;
+}
+
 export class AuditLogger {
   constructor(config: ShieldConfig);
   log(options: {

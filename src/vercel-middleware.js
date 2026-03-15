@@ -17,6 +17,7 @@
 
 const { ShieldConfig } = require('./config');
 const { Shield } = require('./shield');
+const { StreamDesanitizer } = require('./stream');
 
 /** Symbol key for attaching token maps to params objects (survives spread/copy) */
 const _TOKEN_MAP_KEY = Symbol.for('cloakllm.tokenMap');
@@ -167,10 +168,10 @@ function createCloakLLMMiddleware(config) {
     },
 
     /**
-     * Buffer streamed text-deltas, desanitize on text-end.
+     * Incrementally desanitize streamed text-deltas.
      *
-     * Tokens like [EMAIL_0] can span chunk boundaries, so we accumulate
-     * all text for each block and desanitize the complete text at once.
+     * Uses StreamDesanitizer state machine to emit text as soon as it's safe,
+     * buffering only when a potential token boundary is encountered.
      */
     wrapStream: async ({ doStream, params, model }) => {
       const result = await doStream();
@@ -178,37 +179,30 @@ function createCloakLLMMiddleware(config) {
 
       if (!tokenMap) return result;
 
-      const modelId = model?.modelId || '';
-
-      /** @type {Map<string, string>} blockId -> accumulated text */
-      const buffers = new Map();
+      const desan = new StreamDesanitizer(tokenMap);
 
       const transformStream = new TransformStream({
         transform(chunk, controller) {
           if (chunk.type === 'text-delta') {
-            const blockId = chunk.id || '__default__';
-            const current = buffers.get(blockId) || '';
-            buffers.set(blockId, current + chunk.textDelta);
-            // Buffer — don't emit yet
+            const output = desan.feed(chunk.textDelta);
+            if (output) {
+              controller.enqueue({
+                ...chunk,
+                textDelta: output,
+              });
+            }
             return;
           }
 
           if (chunk.type === 'text-end') {
-            const blockId = chunk.id || '__default__';
-            const buffered = buffers.get(blockId) || '';
-            buffers.delete(blockId);
-
-            if (buffered) {
-              const desanitized = shield.desanitize(buffered, tokenMap, {
-                model: modelId,
-              });
+            const flushed = desan.flush();
+            if (flushed) {
               controller.enqueue({
                 type: 'text-delta',
-                textDelta: desanitized,
+                textDelta: flushed,
                 ...(chunk.id ? { id: chunk.id } : {}),
               });
             }
-
             controller.enqueue(chunk);
             return;
           }
@@ -219,19 +213,13 @@ function createCloakLLMMiddleware(config) {
 
         flush(controller) {
           // Flush any remaining buffered text (edge case: stream ends without text-end)
-          for (const [blockId, text] of buffers) {
-            if (text) {
-              const desanitized = shield.desanitize(text, tokenMap, {
-                model: modelId,
-              });
-              controller.enqueue({
-                type: 'text-delta',
-                textDelta: desanitized,
-                ...(blockId !== '__default__' ? { id: blockId } : {}),
-              });
-            }
+          const flushed = desan.flush();
+          if (flushed) {
+            controller.enqueue({
+              type: 'text-delta',
+              textDelta: flushed,
+            });
           }
-          buffers.clear();
         },
       });
 

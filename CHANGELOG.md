@@ -5,6 +5,20 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-15
+
+### Added
+
+- `StreamDesanitizer` — incremental streaming desanitization state machine (`cloakllm/stream.js`)
+- TypeScript types for `StreamDesanitizer` class
+- Integration tests for OpenAI middleware (n>1 choices, streaming, edge cases)
+
+### Changed
+
+- OpenAI middleware streaming: replaced full-buffer approach with incremental `StreamDesanitizer`
+- Vercel AI SDK middleware streaming: replaced buffered TransformStream with `StreamDesanitizer`
+- All middleware paths now emit desanitized text as chunks arrive instead of buffering entire response
+
 ## [0.2.5] - 2026-03-15
 
 ### Changed

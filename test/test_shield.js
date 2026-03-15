@@ -524,11 +524,13 @@ describe('OpenAI SDK streaming desanitization', () => {
       chunks.push(chunk);
     }
 
-    // Should yield a single desanitized chunk
-    assert.equal(chunks.length, 1);
-    const finalContent = chunks[0].choices[0].delta.content;
-    assert.ok(finalContent.includes('john@example.com'), `Expected real email in: ${finalContent}`);
-    assert.ok(!finalContent.includes('[EMAIL_0]'), `Token should be replaced in: ${finalContent}`);
+    // Incremental streaming: multiple chunks emitted as text arrives
+    assert.ok(chunks.length >= 1, `Expected at least 1 chunk, got ${chunks.length}`);
+    const fullContent = chunks
+      .map(c => c.choices?.[0]?.delta?.content || '')
+      .join('');
+    assert.ok(fullContent.includes('john@example.com'), `Expected real email in: ${fullContent}`);
+    assert.ok(!fullContent.includes('[EMAIL_0]'), `Token should be replaced in: ${fullContent}`);
   });
 
   it('handles streaming with no PII gracefully', async () => {
