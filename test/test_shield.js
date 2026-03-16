@@ -1192,3 +1192,206 @@ describe('Entity Hashing', () => {
     assert.equal(actual, expected);
   });
 });
+
+// ─── Attestation Integration ─────────────────────────────────────
+
+describe('Attestation Integration', () => {
+  const crypto = require('crypto');
+  const { DeploymentKeyPair, SanitizationCertificate, MerkleTree } = require('../src');
+
+  it('sanitize creates certificate', () => {
+    const kp = DeploymentKeyPair.generate();
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ attestationKey: kp, logDir }));
+      const [, tm] = shield.sanitize('Email john@acme.com');
+      assert.ok(tm.certificate !== null);
+      assert.ok(tm.certificate.verify(kp.publicKey));
+    } finally {
+      fs.rmSync(logDir, { recursive: true });
+    }
+  });
+
+  it('no key means no certificate', () => {
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ logDir }));
+      const [, tm] = shield.sanitize('Email john@acme.com');
+      assert.equal(tm.certificate, null);
+    } finally {
+      fs.rmSync(logDir, { recursive: true });
+    }
+  });
+
+  it('certificate hashes match', () => {
+    const kp = DeploymentKeyPair.generate();
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ attestationKey: kp, logDir }));
+      const text = 'Email john@acme.com about the deal';
+      const [sanitized, tm] = shield.sanitize(text);
+      assert.equal(tm.certificate.input_hash, crypto.createHash('sha256').update(text).digest('hex'));
+      assert.equal(tm.certificate.output_hash, crypto.createHash('sha256').update(sanitized).digest('hex'));
+    } finally {
+      fs.rmSync(logDir, { recursive: true });
+    }
+  });
+
+  it('certificate tamper detection', () => {
+    const kp = DeploymentKeyPair.generate();
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ attestationKey: kp, logDir }));
+      const [, tm] = shield.sanitize('Email john@acme.com');
+      tm.certificate.entity_count = 999;
+      assert.equal(tm.certificate.verify(kp.publicKey), false);
+    } finally {
+      fs.rmSync(logDir, { recursive: true });
+    }
+  });
+
+  it('verifyCertificate method', () => {
+    const kp = DeploymentKeyPair.generate();
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ attestationKey: kp, logDir }));
+      const [, tm] = shield.sanitize('Email john@acme.com');
+      assert.ok(shield.verifyCertificate(tm.certificate));
+      assert.ok(shield.verifyCertificate(tm.certificate.toDict()));
+    } finally {
+      fs.rmSync(logDir, { recursive: true });
+    }
+  });
+
+  it('batch creates certificate with Merkle', () => {
+    const kp = DeploymentKeyPair.generate();
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ attestationKey: kp, logDir }));
+      const texts = ['Email john@acme.com', 'Call 555-123-4567'];
+      const [sanitizedTexts, tm] = shield.sanitizeBatch(texts);
+      assert.ok(tm.certificate !== null);
+      assert.ok(tm.batchCertificate !== null);
+      assert.ok(tm.merkleTree !== null);
+      assert.ok(tm.certificate.verify(kp.publicKey));
+
+      // Verify input Merkle proofs
+      for (let i = 0; i < texts.length; i++) {
+        const leaf = crypto.createHash('sha256').update(texts[i]).digest('hex');
+        const proof = tm.merkleTree.input.proof(i);
+        assert.ok(MerkleTree.verifyProof(leaf, proof, tm.merkleTree.input.root));
+      }
+      // Verify output Merkle proofs
+      for (let i = 0; i < sanitizedTexts.length; i++) {
+        const leaf = crypto.createHash('sha256').update(sanitizedTexts[i]).digest('hex');
+        const proof = tm.merkleTree.output.proof(i);
+        assert.ok(MerkleTree.verifyProof(leaf, proof, tm.merkleTree.output.root));
+      }
+    } finally {
+      fs.rmSync(logDir, { recursive: true });
+    }
+  });
+
+  it('audit log includes certificate fields', () => {
+    const kp = DeploymentKeyPair.generate();
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ attestationKey: kp, logDir }));
+      shield.sanitize('Email john@acme.com');
+      const logFiles = fs.readdirSync(logDir).filter(f => f.endsWith('.jsonl'));
+      const entry = JSON.parse(fs.readFileSync(path.join(logDir, logFiles[0]), 'utf-8').split('\n')[0]);
+      assert.ok(entry.certificate_hash !== null);
+      assert.equal(entry.key_id, kp.keyId);
+    } finally {
+      fs.rmSync(logDir, { recursive: true });
+    }
+  });
+
+  it('audit chain valid with attestation', () => {
+    const kp = DeploymentKeyPair.generate();
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ attestationKey: kp, logDir }));
+      shield.sanitize('Email john@acme.com');
+      shield.sanitize('Call 555-123-4567');
+      shield.sanitizeBatch(['test1', 'test2']);
+      const { valid, errors } = shield.verifyAudit();
+      assert.ok(valid, `Audit chain broken: ${errors.join(', ')}`);
+    } finally {
+      fs.rmSync(logDir, { recursive: true });
+    }
+  });
+
+  it('attestation key from file', () => {
+    const kp = DeploymentKeyPair.generate();
+    const logDir = tmpDir();
+    const keyDir = tmpDir();
+    const keyPath = path.join(keyDir, 'key.json');
+    try {
+      kp.save(keyPath);
+      const shield = new Shield(new ShieldConfig({ attestationKeyPath: keyPath, logDir }));
+      const [, tm] = shield.sanitize('Email john@acme.com');
+      assert.ok(tm.certificate !== null);
+      assert.ok(tm.certificate.verify(kp.publicKey));
+    } finally {
+      fs.rmSync(logDir, { recursive: true });
+      fs.rmSync(keyDir, { recursive: true });
+    }
+  });
+
+  it('generateAttestationKey', () => {
+    const kp = Shield.generateAttestationKey();
+    assert.equal(kp.publicKey.length, 32);
+    assert.equal(kp.privateKey.length, 32);
+  });
+
+  it('multi-turn gets fresh certificates', () => {
+    const kp = DeploymentKeyPair.generate();
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ attestationKey: kp, logDir }));
+      const [, tm1] = shield.sanitize('Email john@acme.com');
+      const cert1 = tm1.certificate;
+      const [, tm2] = shield.sanitize('Call 555-123-4567', { tokenMap: tm1 });
+      const cert2 = tm2.certificate;
+      assert.notEqual(cert1.signature, cert2.signature);
+      assert.ok(cert1.verify(kp.publicKey));
+      assert.ok(cert2.verify(kp.publicKey));
+    } finally {
+      fs.rmSync(logDir, { recursive: true });
+    }
+  });
+
+  it('no PII text still creates valid certificate', () => {
+    const kp = DeploymentKeyPair.generate();
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ attestationKey: kp, logDir }));
+      const [sanitized, tm] = shield.sanitize('Hello world, no PII here');
+      assert.equal(sanitized, 'Hello world, no PII here');
+      assert.ok(tm.certificate !== null);
+      assert.equal(tm.certificate.entity_count, 0);
+      assert.deepStrictEqual(tm.certificate.categories, {});
+      assert.ok(tm.certificate.verify(kp.publicKey));
+    } finally {
+      fs.rmSync(logDir, { recursive: true });
+    }
+  });
+
+  it('batch with single item creates valid certificate', () => {
+    const kp = DeploymentKeyPair.generate();
+    const logDir = tmpDir();
+    try {
+      const shield = new Shield(new ShieldConfig({ attestationKey: kp, logDir }));
+      const [, tm] = shield.sanitizeBatch(['Email john@acme.com']);
+      assert.ok(tm.certificate !== null);
+      assert.ok(tm.certificate.verify(kp.publicKey));
+      assert.ok(tm.merkleTree !== null);
+      // Single-leaf Merkle tree: root = leaf hash
+      const expectedRoot = crypto.createHash('sha256').update('Email john@acme.com').digest('hex');
+      assert.equal(tm.merkleTree.input.root, expectedRoot);
+    } finally {
+      fs.rmSync(logDir, { recursive: true });
+    }
+  });
+});

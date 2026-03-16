@@ -5,6 +5,24 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-03-15
+
+### Added
+
+- **Cryptographic attestation** — Ed25519 digital signatures for sanitization certificates
+  - `DeploymentKeyPair` — generate, save, load Ed25519 signing keys (Node.js built-in crypto, zero deps)
+  - `SanitizationCertificate` — signed proof that a sanitization operation occurred
+  - `MerkleTree` — binary Merkle tree for batch attestation with proof generation and verification
+  - `deriveEntityHashKey()` — HKDF-SHA256 key derivation
+  - `shield.verifyCertificate()` — verify a certificate's signature
+  - `Shield.generateAttestationKey()` — convenience static method
+- Attestation config: `attestationKey`, `attestationKeyPath`, `CLOAKLLM_SIGNING_KEY_PATH` env var
+- Certificate attached to `tokenMap.certificate` after `sanitize()` and `sanitizeBatch()`
+- Batch certificates include Merkle roots (`tokenMap.merkleTree`)
+- Audit log entries include `certificate_hash` and `key_id` fields
+- Full TypeScript declarations for all attestation types
+- Cross-language compatible: certificates signed in Python verify in JS and vice versa
+
 ## [0.3.1] - 2026-03-15
 
 ### Added

@@ -22,6 +22,12 @@ const { AuditLogger } = require('./audit');
 const { StreamDesanitizer } = require('./stream');
 const { enable, disable, getShield, isEnabled } = require('./middleware');
 const { createCloakLLMMiddleware } = require('./vercel-middleware');
+const {
+  DeploymentKeyPair,
+  SanitizationCertificate,
+  MerkleTree,
+  deriveEntityHashKey,
+} = require('./attestation');
 
 module.exports = {
   Shield,
@@ -36,4 +42,8 @@ module.exports = {
   getShield,
   isEnabled,
   createCloakLLMMiddleware,
+  DeploymentKeyPair,
+  SanitizationCertificate,
+  MerkleTree,
+  deriveEntityHashKey,
 };

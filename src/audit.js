@@ -97,6 +97,8 @@ class AuditLogger {
     entityDetails = [],
     timing = null,
     metadata = {},
+    certificateHash = null,
+    keyId = null,
   }) {
     if (!this.config.auditEnabled) return null;
 
@@ -122,6 +124,8 @@ class AuditLogger {
       mode,
       entity_details: entityDetails,
       timing,
+      certificate_hash: certificateHash,
+      key_id: keyId,
       prev_hash: this._prevHash,
       metadata,
     };

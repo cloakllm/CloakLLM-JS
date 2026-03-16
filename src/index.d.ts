@@ -26,6 +26,8 @@ export interface ShieldConfigOptions {
   logOriginalValues?: boolean;
   autoMode?: boolean;
   skipModels?: string[];
+  attestationKey?: DeploymentKeyPair | null;
+  attestationKeyPath?: string | null;
 }
 
 export class ShieldConfig {
@@ -53,6 +55,8 @@ export class ShieldConfig {
   logOriginalValues: boolean;
   autoMode: boolean;
   skipModels: string[];
+  attestationKey: DeploymentKeyPair | null;
+  attestationKeyPath: string | null;
 }
 
 export interface Detection {
@@ -87,6 +91,9 @@ export class TokenMap {
   mode: 'tokenize' | 'redact';
   entityHashing: boolean;
   entityHashKey: string;
+  certificate: SanitizationCertificate | null;
+  batchCertificate: SanitizationCertificate | null;
+  merkleTree: { input: MerkleTree; output: MerkleTree } | null;
   readonly entityCount: number;
   readonly categories: Record<string, number>;
   readonly entityDetails: EntityDetail[];
@@ -150,6 +157,8 @@ export class Shield {
   resetMetrics(): void;
   verifyAudit(): { valid: boolean; errors: string[] };
   auditStats(): Record<string, any>;
+  verifyCertificate(certificate: SanitizationCertificate | Record<string, any>, publicKey?: Buffer | null): boolean;
+  static generateAttestationKey(): DeploymentKeyPair;
 }
 
 export interface Timing {
@@ -218,6 +227,8 @@ export class AuditLogger {
     entityDetails?: EntityDetail[];
     timing?: Timing | null;
     metadata?: Record<string, any>;
+    certificateHash?: string | null;
+    keyId?: string | null;
   }): Record<string, any> | null;
   verifyChain(logFilePath?: string | null): { valid: boolean; errors: string[] };
   getStats(): Record<string, any>;
@@ -251,3 +262,62 @@ export interface CloakLLMMiddleware {
 export function createCloakLLMMiddleware(
   config?: ShieldConfig | ShieldConfigOptions
 ): CloakLLMMiddleware;
+
+// --- Attestation ---
+
+export class DeploymentKeyPair {
+  privateKey: Buffer;
+  publicKey: Buffer;
+  keyId: string;
+  constructor(privateKey: Buffer, publicKey: Buffer, keyId: string);
+  static generate(): DeploymentKeyPair;
+  sign(data: Buffer | string): Buffer;
+  signB64(data: Buffer | string): string;
+  static verify(publicKey: Buffer, data: Buffer | string, signature: Buffer): boolean;
+  static verifyB64(publicKey: Buffer, data: Buffer | string, signatureB64: string): boolean;
+  readonly publicKeyB64: string;
+  save(filePath: string): void;
+  static fromFile(filePath: string): DeploymentKeyPair;
+}
+
+export class SanitizationCertificate {
+  version: string;
+  timestamp: string;
+  input_hash: string;
+  output_hash: string;
+  entity_count: number;
+  categories: Record<string, number>;
+  detection_passes: string[];
+  mode: string;
+  key_id: string;
+  signature: string;
+  public_key: string;
+  constructor(fields?: Partial<SanitizationCertificate>);
+  static create(options: {
+    originalText?: string | null;
+    sanitizedText?: string | null;
+    entityCount: number;
+    categories: Record<string, number>;
+    detectionPasses: string[];
+    mode: string;
+    keypair: DeploymentKeyPair;
+    inputMerkleRoot?: string | null;
+    outputMerkleRoot?: string | null;
+  }): SanitizationCertificate;
+  verify(publicKey: Buffer): boolean;
+  toDict(): Record<string, any>;
+  static fromDict(d: Record<string, any>): SanitizationCertificate;
+}
+
+export class MerkleTree {
+  constructor(leaves: string[]);
+  readonly root: string;
+  proof(index: number): Array<[string, string]>;
+  static verifyProof(leafHash: string, proof: Array<[string, string]>, root: string): boolean;
+}
+
+export function deriveEntityHashKey(
+  masterKey: Buffer | string,
+  salt?: Buffer | null,
+  info?: Buffer | string
+): string;

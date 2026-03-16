@@ -33,6 +33,12 @@ class TokenMap {
     this.entityHashing = entityHashing;
     /** @type {string} */
     this.entityHashKey = entityHashKey;
+    /** @type {import('./attestation').SanitizationCertificate|null} */
+    this.certificate = null;
+    /** @type {import('./attestation').SanitizationCertificate|null} */
+    this.batchCertificate = null;
+    /** @type {Object|null} */
+    this.merkleTree = null;
   }
 
   /**

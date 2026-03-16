@@ -17,6 +17,7 @@ const { ShieldConfig } = require('./config');
 const { DetectionEngine } = require('./detector');
 const { Tokenizer, TokenMap } = require('./tokenizer');
 const { AuditLogger } = require('./audit');
+const { DeploymentKeyPair, SanitizationCertificate, MerkleTree } = require('./attestation');
 
 class Shield {
   /**
@@ -31,6 +32,13 @@ class Shield {
     // Auto-generate entity hash key if hashing enabled but no key provided
     if (this.config.entityHashing && !this.config.entityHashKey) {
       this.config.entityHashKey = crypto.randomBytes(32).toString('hex');
+    }
+    // Load attestation keypair
+    this._attestationKey = null;
+    if (this.config.attestationKey) {
+      this._attestationKey = this.config.attestationKey;
+    } else if (this.config.attestationKeyPath) {
+      this._attestationKey = DeploymentKeyPair.fromFile(this.config.attestationKeyPath);
     }
   }
 
@@ -107,6 +115,26 @@ class Shield {
 
     this._accumulate('sanitize', elapsedMs, detectionTiming, tokenizationMs, detections.length, map.categories);
 
+    // Create attestation certificate if signing key is configured
+    let certHash = null;
+    let certKeyId = null;
+    if (this._attestationKey) {
+      const detectionPasses = ['regex'];
+      if (this.config.llmDetection) detectionPasses.push('llm');
+      const cert = SanitizationCertificate.create({
+        originalText: text,
+        sanitizedText: sanitized,
+        entityCount: detections.length,
+        categories: map.categories,
+        detectionPasses: detectionPasses,
+        mode: this.config.mode,
+        keypair: this._attestationKey,
+      });
+      map.certificate = cert;
+      certHash = crypto.createHash('sha256').update(cert.signature).digest('hex');
+      certKeyId = cert.key_id;
+    }
+
     this.audit.log({
       eventType: 'sanitize',
       originalText: text,
@@ -121,6 +149,8 @@ class Shield {
       entityDetails: map.entityDetails,
       timing,
       metadata,
+      certificateHash: certHash,
+      keyId: certKeyId,
     });
 
     return [sanitized, map];
@@ -260,7 +290,38 @@ class Shield {
 
     this._accumulate('sanitizeBatch', elapsedMs, combinedDetectionTiming, totalTokenizationMs, totalDetections, tokenMap.categories);
 
-    const crypto = require('crypto');
+    // Create batch attestation certificate with Merkle roots
+    let certHash = null;
+    let certKeyId = null;
+    if (this._attestationKey) {
+      const inputHashes = texts.map(t =>
+        crypto.createHash('sha256').update(t).digest('hex')
+      );
+      const outputHashes = sanitizedTexts.map(t =>
+        crypto.createHash('sha256').update(t).digest('hex')
+      );
+      const inputTree = new MerkleTree(inputHashes);
+      const outputTree = new MerkleTree(outputHashes);
+
+      const detectionPasses = ['regex'];
+      if (this.config.llmDetection) detectionPasses.push('llm');
+
+      const cert = SanitizationCertificate.create({
+        entityCount: totalDetections,
+        categories: tokenMap.categories,
+        detectionPasses: detectionPasses,
+        mode: this.config.mode,
+        keypair: this._attestationKey,
+        inputMerkleRoot: inputTree.root,
+        outputMerkleRoot: outputTree.root,
+      });
+      tokenMap.certificate = cert;
+      tokenMap.batchCertificate = cert;
+      tokenMap.merkleTree = { input: inputTree, output: outputTree };
+      certHash = crypto.createHash('sha256').update(cert.signature).digest('hex');
+      certKeyId = cert.key_id;
+    }
+
     const auditMetadata = { ...metadata };
     auditMetadata.prompt_hashes = texts.map(t =>
       crypto.createHash('sha256').update(t).digest('hex')
@@ -283,6 +344,8 @@ class Shield {
       entityDetails: allEntityDetails,
       timing,
       metadata: auditMetadata,
+      certificateHash: certHash,
+      keyId: certKeyId,
     });
 
     return [sanitizedTexts, tokenMap];
@@ -385,6 +448,34 @@ class Shield {
   /** Get aggregate audit statistics. */
   auditStats() {
     return this.audit.getStats();
+  }
+
+  /**
+   * Verify a sanitization certificate's signature.
+   * @param {SanitizationCertificate|Object} certificate
+   * @param {Buffer} [publicKey] - If null, uses Shield's attestation key
+   * @returns {boolean}
+   */
+  verifyCertificate(certificate, publicKey = null) {
+    if (!(certificate instanceof SanitizationCertificate)) {
+      certificate = SanitizationCertificate.fromDict(certificate);
+    }
+    if (!publicKey) {
+      if (this._attestationKey) {
+        publicKey = this._attestationKey.publicKey;
+      } else {
+        throw new Error('No public key provided and no attestation key configured');
+      }
+    }
+    return certificate.verify(publicKey);
+  }
+
+  /**
+   * Generate a new Ed25519 deployment keypair for attestation.
+   * @returns {DeploymentKeyPair}
+   */
+  static generateAttestationKey() {
+    return DeploymentKeyPair.generate();
   }
 }
 

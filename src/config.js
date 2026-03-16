@@ -49,6 +49,12 @@ class ShieldConfig {
     this.logDir = options.logDir ?? process.env.CLOAKLLM_LOG_DIR ?? './cloakllm_audit';
     this.logOriginalValues = options.logOriginalValues ?? false;
 
+    // --- Attestation (Ed25519 signing) ---
+    /** @type {import('./attestation').DeploymentKeyPair|null} Pre-loaded keypair */
+    this.attestationKey = options.attestationKey ?? null;
+    /** @type {string|null} Path to keypair JSON file */
+    this.attestationKeyPath = options.attestationKeyPath ?? process.env.CLOAKLLM_SIGNING_KEY_PATH ?? null;
+
     // --- Middleware ---
     this.autoMode = options.autoMode ?? true;
     /** @type {string[]} Model prefixes to skip sanitization */
