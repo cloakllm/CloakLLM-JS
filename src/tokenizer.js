@@ -8,10 +8,10 @@
 
 const crypto = require('crypto');
 
-const TOKEN_PATTERN = /\[([A-Z_]+_\d+)\]/g;
+const TOKEN_PATTERN = /\[([A-Z_]+_(?:\d+|REDACTED))\]/g;
 const ESCAPED_OPEN = '\uFF3B';
 const ESCAPED_CLOSE = '\uFF3D';
-const ESCAPED_PATTERN = new RegExp(`${ESCAPED_OPEN}([A-Z_]+_\\d+)${ESCAPED_CLOSE}`, 'g');
+const ESCAPED_PATTERN = new RegExp(`${ESCAPED_OPEN}([A-Z_]+_(?:\\d+|REDACTED))${ESCAPED_CLOSE}`, 'g');
 
 class TokenMap {
   /**

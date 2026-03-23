@@ -1,13 +1,14 @@
 /**
  * PII Detection Engine.
  *
- * Regex-based detection for structured sensitive data.
- * Covers: emails, SSNs, credit cards, phone numbers, IP addresses,
- * API keys, AWS keys, JWTs, IBANs, and custom patterns.
- *
- * NER-based detection (names, orgs, locations) is available in the
- * Python version via spaCy. JS NER support is on the roadmap.
+ * Multi-pass detection for structured and contextual sensitive data.
+ * Pass 1: Regex (built-in + locale + custom patterns)
+ * Pass 2: NER via compromise (optional, English only)
+ * Pass 3: Local LLM via Ollama (opt-in, any language)
  */
+
+const { LOCALE_PATTERNS } = require('./locale-patterns');
+const { NerDetector, isNerAvailable } = require('./ner-detector');
 
 /**
  * @typedef {Object} Detection
@@ -16,7 +17,7 @@
  * @property {number} start - Start character offset
  * @property {number} end - End character offset
  * @property {number} confidence - 0.0-1.0 confidence score
- * @property {string} source - "regex" or "llm"
+ * @property {string} source - "regex", "ner", or "llm"
  */
 
 // Ordered by specificity (most specific first)
@@ -67,11 +68,26 @@ class DetectionEngine {
     this.config = config;
     this._compiledPatterns = this._buildPatterns();
 
-    // --- LLM detector (opt-in Pass 2) ---
+    // --- NER detector (optional, via compromise) ---
+    this._nerDetector = null;
+    if (isNerAvailable()) {
+      try {
+        this._nerDetector = new NerDetector();
+      } catch {
+        // compromise load failed
+      }
+    }
+
+    // --- LLM detector (opt-in Pass 3) ---
     this._llmDetector = null;
     if (config.llmDetection) {
       const { LlmDetector } = require('./llm-detector');
       this._llmDetector = new LlmDetector(config);
+    }
+
+    // NER/LLM coordination: if NER handles PERSON/ORG/GPE, tell LLM to skip them
+    if (this._nerDetector && this._llmDetector) {
+      this._llmDetector.addExcludedCategories(['PERSON', 'ORG', 'GPE']);
     }
   }
 
@@ -92,10 +108,27 @@ class DetectionEngine {
       }
     }
 
-    // Built-in patterns second
+    // Locale patterns second — before built-in so locale-specific patterns
+    // (e.g., PHONE_DE) take priority over universal patterns (e.g., PHONE)
+    // via covered-span overlap checks.
+    const localePatterns = LOCALE_PATTERNS[this.config.locale] || [];
+    for (const [name, pattern] of localePatterns) {
+      if (this._testRegexSafety(pattern)) {
+        compiled.push({ name, pattern: new RegExp(pattern.source, pattern.flags) });
+      }
+    }
+
+    // Built-in patterns third
     for (const [name, { pattern, configKey }] of Object.entries(PATTERNS)) {
       if (this.config[configKey] !== false) {
         compiled.push({ name, pattern });
+      }
+    }
+
+    // Safety-check all patterns (including built-in)
+    for (const { name, pattern } of compiled) {
+      if (!this._testRegexSafety(pattern)) {
+        console.warn(`CloakLLM: Pattern '${name}' failed ReDoS safety check — this is a bug`);
       }
     }
 
@@ -103,10 +136,19 @@ class DetectionEngine {
   }
 
   _testRegexSafety(regex) {
-    const testInput = 'a'.repeat(25) + '!';
-    const start = performance.now();
-    new RegExp(regex.source, regex.flags).exec(testInput);
-    return (performance.now() - start) < 50;
+    const inputs = [
+      'a'.repeat(25) + '!',
+      '1'.repeat(25) + '!',
+      ' '.repeat(25) + '!',
+      'a1 '.repeat(8) + '!',
+      '@'.repeat(25) + '!',
+    ];
+    for (const input of inputs) {
+      const start = performance.now();
+      new RegExp(regex.source, regex.flags).exec(input);
+      if ((performance.now() - start) >= 20) return false;
+    }
+    return true;
   }
 
   /**
@@ -156,7 +198,15 @@ class DetectionEngine {
     }
     timing.regex_ms = +(performance.now() - t0).toFixed(2);
 
-    // --- Pass 2: Local LLM (semantic/contextual PII, opt-in) ---
+    // --- Pass 2: NER via compromise (optional) ---
+    t0 = performance.now();
+    if (this._nerDetector) {
+      const nerDetections = this._nerDetector.detect(text, coveredSpans);
+      detections.push(...nerDetections);
+    }
+    timing.ner_ms = +(performance.now() - t0).toFixed(2);
+
+    // --- Pass 3: Local LLM (semantic/contextual PII, opt-in) ---
     t0 = performance.now();
     if (this._llmDetector !== null) {
       const llmDetections = this._llmDetector.detect(text, coveredSpans);

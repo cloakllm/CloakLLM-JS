@@ -40,13 +40,23 @@ class Shield {
     } else if (this.config.attestationKeyPath) {
       this._attestationKey = DeploymentKeyPair.fromFile(this.config.attestationKeyPath);
     }
+    // Detection gap warning
+    if (!this.detector._nerDetector && !this.config.llmDetection) {
+      if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
+        console.warn(
+          '[cloakllm] Running regex-only detection. ' +
+          'PERSON, ORG, and GPE entities may be missed. ' +
+          'Install "compromise" for NER or configure Ollama for LLM detection.'
+        );
+      }
+    }
   }
 
   static _emptyMetrics() {
     return {
       calls: { sanitize: 0, desanitize: 0, sanitizeBatch: 0, desanitizeBatch: 0 },
       total_ms: 0,
-      detection: { regex_ms: 0, llm_ms: 0 },
+      detection: { regex_ms: 0, ner_ms: 0, llm_ms: 0 },
       tokenization_ms: 0,
       entities_detected: 0,
       categories: {},
@@ -56,7 +66,7 @@ class Shield {
   _accumulate(callType, totalMs, detectionTiming, tokenizationMs, entityCount, categories) {
     this._metrics.calls[callType]++;
     this._metrics.total_ms += totalMs;
-    for (const key of ['regex_ms', 'llm_ms']) {
+    for (const key of ['regex_ms', 'ner_ms', 'llm_ms']) {
       this._metrics.detection[key] += (detectionTiming[key] || 0);
     }
     this._metrics.tokenization_ms += tokenizationMs;
@@ -224,7 +234,7 @@ class Shield {
     const sanitizedTexts = [];
     const allEntityDetails = [];
     let totalDetections = 0;
-    const combinedDetectionTiming = { regex_ms: 0, llm_ms: 0 };
+    const combinedDetectionTiming = { regex_ms: 0, ner_ms: 0, llm_ms: 0 };
     let totalDetectionMs = 0;
     let totalTokenizationMs = 0;
 
@@ -234,7 +244,7 @@ class Shield {
       let t0 = performance.now();
       const { detections, timing: detTiming } = this.detector.detect(text);
       totalDetectionMs += performance.now() - t0;
-      for (const key of ['regex_ms', 'llm_ms']) {
+      for (const key of ['regex_ms', 'ner_ms', 'llm_ms']) {
         combinedDetectionTiming[key] += (detTiming[key] || 0);
       }
 
@@ -277,6 +287,7 @@ class Shield {
       total_ms: +elapsedMs.toFixed(2),
       detection_ms: +totalDetectionMs.toFixed(2),
       regex_ms: +combinedDetectionTiming.regex_ms.toFixed(2),
+      ner_ms: +combinedDetectionTiming.ner_ms.toFixed(2),
       llm_ms: +combinedDetectionTiming.llm_ms.toFixed(2),
       tokenization_ms: +totalTokenizationMs.toFixed(2),
     };
@@ -397,15 +408,21 @@ class Shield {
 
   /**
    * Analyze text for sensitive data without modifying it.
+   *
+   * WARNING: By default, output contains raw PII in the 'text' field.
+   * Set redactValues: true to replace with '[redacted]'.
+   *
    * @param {string} text
+   * @param {Object} [options]
+   * @param {boolean} [options.redactValues=false] - Replace PII text with '[redacted]'
    * @returns {Object}
    */
-  analyze(text) {
+  analyze(text, { redactValues = false } = {}) {
     const { detections } = this.detector.detect(text);
     return {
       entity_count: detections.length,
       entities: detections.map(d => ({
-        text: d.text,
+        text: redactValues ? '[redacted]' : d.text,
         category: d.category,
         start: d.start,
         end: d.end,
@@ -427,6 +444,7 @@ class Shield {
       avg_ms: totalCalls ? +(this._metrics.total_ms / totalCalls).toFixed(2) : 0,
       detection: {
         regex_ms: +this._metrics.detection.regex_ms.toFixed(2),
+        ner_ms: +this._metrics.detection.ner_ms.toFixed(2),
         llm_ms: +this._metrics.detection.llm_ms.toFixed(2),
       },
       tokenization_ms: +this._metrics.tokenization_ms.toFixed(2),

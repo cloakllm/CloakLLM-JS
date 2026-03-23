@@ -135,6 +135,9 @@ class AuditLogger {
 
     // Write to log file
     const logFile = this._getLogFile();
+    // NOTE: appendFileSync is atomic on POSIX for writes < PIPE_BUF (4096 bytes).
+    // For multi-process deployments, use external coordination.
+    // This module assumes single-process, single-writer access.
     fs.appendFileSync(logFile, JSON.stringify(entryData) + '\n');
 
     // Update chain state
@@ -153,9 +156,10 @@ class AuditLogger {
     const errors = [];
     const files = logFilePath ? [logFilePath] : this._getLogFiles();
 
-    if (files.length === 0) return { valid: true, errors: [] };
+    if (files.length === 0) return { valid: true, errors: [], finalSeq: -1 };
 
     let prevHash = GENESIS_HASH;
+    let finalSeq = -1;
 
     for (const fpath of files) {
       const content = fs.readFileSync(fpath, 'utf-8');
@@ -169,6 +173,10 @@ class AuditLogger {
         } catch {
           errors.push(`${fname}:${i + 1} — Invalid JSON`);
           continue;
+        }
+
+        if (entry.seq !== undefined) {
+          finalSeq = entry.seq;
         }
 
         // Check chain link
@@ -196,7 +204,7 @@ class AuditLogger {
       }
     }
 
-    return { valid: errors.length === 0, errors };
+    return { valid: errors.length === 0, errors, finalSeq };
   }
 
   /**

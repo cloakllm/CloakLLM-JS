@@ -19,12 +19,23 @@ const { StreamDesanitizer } = require('./stream');
 const { TokenMap } = require('./tokenizer');
 const crypto = require('crypto');
 
+const MAP_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 /** @type {Shield|null} */
 let _shield = null;
 let _enabled = false;
 
-/** @type {Map<string, TokenMap>} */
+/** @type {Map<string, {tokenMap: TokenMap, created: number}>} */
 const _activeMaps = new Map();
+
+function _cleanupExpiredMaps() {
+  const now = Date.now();
+  for (const [key, entry] of _activeMaps) {
+    if (now - entry.created > MAP_TTL_MS) {
+      _activeMaps.delete(key);
+    }
+  }
+}
 
 /** @type {WeakMap<Object, Function>} client -> original create function */
 const _originalFunctions = new WeakMap();
@@ -73,7 +84,8 @@ function _sanitizeMessages(messages, model) {
     return msg;
   });
 
-  _activeMaps.set(callKey, tokenMap);
+  _cleanupExpiredMaps();
+  _activeMaps.set(callKey, { tokenMap, created: Date.now() });
 
   // Inject system instruction so LLM treats tokens as real values
   if (tokenMap && tokenMap.entityCount > 0) {
@@ -106,8 +118,9 @@ function _sanitizeMessages(messages, model) {
 function _desanitizeResponse(responseText, model, callKey) {
   if (!_shield || !callKey) return responseText;
 
-  const tokenMap = _activeMaps.get(callKey);
+  const entry = _activeMaps.get(callKey);
   _activeMaps.delete(callKey);
+  const tokenMap = entry?.tokenMap;
 
   if (!tokenMap || tokenMap.entityCount === 0) return responseText;
 
@@ -174,8 +187,9 @@ function enable(client, config = null) {
         callKey = ''; // let the generator own cleanup
 
         async function* incrementalDesanitize(stream) {
-          const tokenMap = _activeMaps.get(streamCallKey);
+          const streamEntry = _activeMaps.get(streamCallKey);
           _activeMaps.delete(streamCallKey);
+          const tokenMap = streamEntry?.tokenMap;
 
           if (!tokenMap || tokenMap.entityCount === 0) {
             yield* stream;
@@ -233,8 +247,9 @@ function enable(client, config = null) {
 
       // Desanitize non-streaming response (all choices share the same token map)
       if (callKey && !_shouldSkip(model) && response?.choices) {
-        const tokenMap = _activeMaps.get(callKey);
+        const respEntry = _activeMaps.get(callKey);
         _activeMaps.delete(callKey);
+        const tokenMap = respEntry?.tokenMap;
         callKey = ''; // consumed — cleanup handled above
         if (tokenMap && tokenMap.entityCount > 0) {
           for (const choice of response.choices) {

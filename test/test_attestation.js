@@ -218,7 +218,7 @@ describe('SanitizationCertificate', () => {
     const expectedFields = new Set([
       'version', 'timestamp', 'input_hash', 'output_hash',
       'entity_count', 'categories', 'detection_passes', 'mode',
-      'key_id', 'signature', 'public_key',
+      'key_id', 'nonce', 'signature', 'public_key',
     ]);
     assert.deepStrictEqual(new Set(Object.keys(d)), expectedFields);
   });

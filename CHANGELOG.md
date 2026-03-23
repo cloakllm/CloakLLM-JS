@@ -5,6 +5,35 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-03-23
+
+### Added
+
+- **Multi-language PII detection** — 13 locales with locale-specific regex patterns
+  - Supported locales: `de`, `fr`, `es`, `it`, `pt`, `nl`, `pl`, `se`, `no`, `dk`, `fi`, `gb`, `au`
+  - Locale-specific patterns for SSN, phone, IBAN, tax IDs, national ID numbers
+  - New `locale` config option in `ShieldConfig`
+- **NER via compromise** — optional `compromise` npm package for PERSON, ORG, GPE detection
+  - `NerDetector` class with character offset extraction
+  - Input truncation at 100K chars for safety
+- `analyze({ redactValues: true })` option to mask PII values in analysis output
+- Replay-resistant attestation certificates with UUID4 `nonce` field
+- `verifyChain()` / `verifyAudit()` now return `finalSeq` for truncation detection
+- Middleware TTL eviction (5-min) for `_activeMaps` to prevent memory leaks
+
+### Security
+
+- **Ollama SSRF prevention** — URL validation restricts to localhost/private IPs by default (`llmAllowRemote` opt-in)
+- **LLM cache PII protection** — cache keys hashed with SHA-256 instead of raw text
+- **CLI PII protection** — `--show-pii` flag required to display raw PII values (redacted by default)
+- **StreamDesanitizer** now unescapes fullwidth brackets on output
+- **ReDoS hardening** — 5 adversarial test inputs, 20ms threshold, built-in patterns tested at construction
+- **Token pattern** extended to match `[CATEGORY_REDACTED]` tokens for consistent handling
+- Removed unused `logOriginalValues` config option
+- Path validation warnings for `logDir` and `attestationKeyPath` outside CWD
+- Windows permission warning in `DeploymentKeyPair.save()`
+- Full TypeScript declarations updated for all new APIs
+
 ## [0.3.2] - 2026-03-15
 
 ### Added

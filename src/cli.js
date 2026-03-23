@@ -14,19 +14,21 @@ const { ShieldConfig } = require('./config');
 const { AuditLogger } = require('./audit');
 
 const args = process.argv.slice(2);
-const command = args[0];
+const showPii = args.includes('--show-pii');
+const filteredArgs = args.filter(a => a !== '--show-pii');
+const command = filteredArgs[0];
 
 function cmdScan() {
-  const text = args.slice(1).join(' ');
+  const text = filteredArgs.slice(1).join(' ');
   if (!text) {
-    console.error('Usage: cloakllm scan "text to scan"');
+    console.error('Usage: cloakllm scan "text to scan" [--show-pii]');
     process.exit(1);
   }
 
   const config = new ShieldConfig({ auditEnabled: false });
   const shield = new Shield(config);
 
-  const analysis = shield.analyze(text);
+  const analysis = shield.analyze(text, { redactValues: !showPii });
 
   if (analysis.entity_count === 0) {
     console.log('✅ No sensitive entities detected.');
@@ -42,12 +44,12 @@ function cmdScan() {
 
   const [sanitized, tokenMap] = shield.sanitize(text);
   console.log(`\n${'─'.repeat(60)}`);
-  console.log(`ORIGINAL:  ${text}`);
+  console.log(`ORIGINAL:  ${showPii ? text : '***'}`);
   console.log(`SANITIZED: ${sanitized}`);
   console.log(`${'─'.repeat(60)}`);
   console.log(`\nToken map (${tokenMap.entityCount} entities):`);
   for (const [token, original] of tokenMap.reverse) {
-    console.log(`  ${token} → "${original}"`);
+    console.log(`  ${token} → "${showPii ? original : '***'}"`);
   }
 }
 
@@ -61,7 +63,7 @@ function warnIfOutsideCwd(dirPath) {
 }
 
 function cmdVerify() {
-  const logDir = args[1];
+  const logDir = filteredArgs[1];
   if (!logDir) {
     console.error('Usage: cloakllm verify <log_dir>');
     process.exit(1);
@@ -93,7 +95,7 @@ function cmdVerify() {
 }
 
 function cmdStats() {
-  const logDir = args[1];
+  const logDir = filteredArgs[1];
   if (!logDir) {
     console.error('Usage: cloakllm stats <log_dir>');
     process.exit(1);
@@ -122,5 +124,8 @@ switch (command) {
     console.log('  scan <text>      Scan text for sensitive data');
     console.log('  verify <dir>     Verify audit log integrity');
     console.log('  stats <dir>      Show audit statistics');
+    console.log('');
+    console.log('Flags:');
+    console.log('  --show-pii       Show raw PII values (default: masked)');
     break;
 }

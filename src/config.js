@@ -9,8 +9,22 @@
  *   CLOAKLLM_LOG_DIR=./my-audit-logs
  */
 
+const path = require('path');
+
+function _validatePath(pathValue, name) {
+  if (!pathValue) return;
+  const resolved = path.resolve(pathValue);
+  const cwd = process.cwd();
+  if (!resolved.startsWith(cwd)) {
+    console.warn(`CloakLLM: ${name} '${resolved}' is outside the current working directory.`);
+  }
+}
+
 class ShieldConfig {
   constructor(options = {}) {
+    // --- Locale ---
+    this.locale = options.locale ?? process.env.CLOAKLLM_LOCALE ?? 'en';
+
     // --- Detection ---
     this.detectEmails = options.detectEmails ?? true;
     this.detectPhones = options.detectPhones ?? true;
@@ -31,6 +45,8 @@ class ShieldConfig {
     this.llmOllamaUrl = options.llmOllamaUrl ?? process.env.CLOAKLLM_OLLAMA_URL ?? 'http://localhost:11434';
     this.llmTimeout = options.llmTimeout ?? 10000;
     this.llmConfidence = options.llmConfidence ?? 0.85;
+    this.llmAllowRemote = options.llmAllowRemote ??
+      (process.env.CLOAKLLM_LLM_ALLOW_REMOTE ?? 'false').toLowerCase() === 'true';
 
     // --- Tokenization ---
     this.mode = options.mode ?? 'tokenize';
@@ -47,13 +63,15 @@ class ShieldConfig {
     // --- Audit Logging ---
     this.auditEnabled = options.auditEnabled ?? true;
     this.logDir = options.logDir ?? process.env.CLOAKLLM_LOG_DIR ?? './cloakllm_audit';
-    this.logOriginalValues = options.logOriginalValues ?? false;
 
     // --- Attestation (Ed25519 signing) ---
     /** @type {import('./attestation').DeploymentKeyPair|null} Pre-loaded keypair */
     this.attestationKey = options.attestationKey ?? null;
     /** @type {string|null} Path to keypair JSON file */
     this.attestationKeyPath = options.attestationKeyPath ?? process.env.CLOAKLLM_SIGNING_KEY_PATH ?? null;
+
+    _validatePath(this.logDir, 'logDir');
+    _validatePath(this.attestationKeyPath, 'attestationKeyPath');
 
     // --- Middleware ---
     this.autoMode = options.autoMode ?? true;

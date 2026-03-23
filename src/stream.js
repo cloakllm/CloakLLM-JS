@@ -5,6 +5,10 @@
  * the entire response. Emits text as soon as it's safe to do so.
  */
 
+const ESCAPED_OPEN = '\uFF3B';
+const ESCAPED_CLOSE = '\uFF3D';
+const UNESCAPE_RE = new RegExp(`${ESCAPED_OPEN}([A-Z_]+_(?:\\d+|REDACTED))${ESCAPED_CLOSE}`, 'g');
+
 const MAX_TOKEN_LEN = 40;
 
 class StreamDesanitizer {
@@ -19,6 +23,10 @@ class StreamDesanitizer {
         for (const [token, original] of tokenMap.reverse) {
             this._reverseCI.set(token.toLowerCase(), original);
         }
+    }
+
+    _unescape(text) {
+        return text.replace(UNESCAPE_RE, (_, m) => `[${m}]`);
     }
 
     /**
@@ -70,7 +78,7 @@ class StreamDesanitizer {
             }
         }
 
-        return parts.join('');
+        return this._unescape(parts.join(''));
     }
 
     /**
@@ -83,7 +91,7 @@ class StreamDesanitizer {
     flush() {
         const remaining = this._buffer;
         this._buffer = '';
-        return remaining;
+        return this._unescape(remaining);
     }
 }
 

@@ -1,16 +1,22 @@
 /**
- * LLM-based PII Detection (Pass 2 for JS SDK).
+ * LLM-based PII Detection (Pass 3 for JS SDK).
  *
  * Uses a local Ollama instance via child_process.execFileSync + curl
  * to detect semantic/contextual PII (names, orgs, addresses, medical, etc.).
  *
  * Opt-in via config: new ShieldConfig({ llmDetection: true })
  * Data never leaves the user's machine.
+ *
+ * SECURITY NOTE: LLM-based detection is advisory and non-deterministic.
+ * It must never be the sole detection mechanism. The LLM prompt is not
+ * hardened against prompt injection.
  */
 
 const cp = require('child_process');
+const crypto = require('crypto');
+const net = require('net');
 
-// Categories the LLM should detect (JS has no spaCy, so includes PERSON/ORG/GPE)
+// Categories the LLM should detect (includes PERSON/ORG/GPE when no NER available)
 const LLM_CATEGORIES = new Set([
   'PERSON', 'ORG', 'GPE',
   'ADDRESS', 'DATE_OF_BIRTH', 'MEDICAL', 'FINANCIAL',
@@ -22,6 +28,22 @@ const EXCLUDED_CATEGORIES = new Set([
   'EMAIL', 'PHONE', 'SSN', 'CREDIT_CARD', 'IP_ADDRESS',
   'API_KEY', 'IBAN', 'JWT',
 ]);
+
+const LOCALE_HINTS = {
+  de: 'The input text is in German. Look for German PII formats (Steuer-ID, IBAN DE, German phone numbers, addresses).',
+  fr: 'The input text is in French. Look for French PII formats (NIR/Sécu, IBAN FR, French phone numbers, addresses).',
+  es: 'The input text is in Spanish. Look for Spanish PII formats (DNI, NIE, IBAN ES, Spanish phone numbers, addresses).',
+  nl: 'The input text is in Dutch. Look for Dutch PII formats (BSN, IBAN NL, Dutch phone numbers, addresses).',
+  he: 'The input text is in Hebrew. Look for Israeli PII formats (Teudat Zehut, Israeli phone numbers, addresses).',
+  zh: 'The input text is in Chinese. Look for Chinese PII formats (身份证号, Chinese phone numbers, addresses).',
+  ja: 'The input text is in Japanese. Look for Japanese PII formats (マイナンバー, Japanese phone numbers, addresses).',
+  ru: 'The input text is in Russian. Look for Russian PII formats (ИНН, СНИЛС, Russian passport, phone numbers, addresses).',
+  ko: 'The input text is in Korean. Look for Korean PII formats (주민등록번호/RRN, Korean phone numbers, addresses).',
+  it: 'The input text is in Italian. Look for Italian PII formats (Codice Fiscale, IBAN IT, Italian phone numbers, addresses).',
+  pl: 'The input text is in Polish. Look for Polish PII formats (PESEL, NIP, IBAN PL, Polish phone numbers, addresses).',
+  pt: 'The input text is in Portuguese. Look for Portuguese/Brazilian PII formats (CPF, NIF, IBAN PT, phone numbers, addresses).',
+  hi: 'The input text is in Hindi. Look for Indian PII formats (Aadhaar, PAN card, Indian phone numbers, addresses).',
+};
 
 class BoundedCache {
   constructor(maxSize = 1024) {
@@ -59,23 +81,70 @@ class BoundedCache {
   }
 }
 
+function _validateOllamaUrl(url, allowRemote) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`CloakLLM: Invalid Ollama URL '${url}'.`);
+  }
+  const hostname = parsed.hostname;
+
+  // Fast path for common localhost
+  if (['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname)) {
+    return url;
+  }
+
+  // Check if it's a private IP
+  if (net.isIP(hostname)) {
+    const parts = hostname.split('.').map(Number);
+    const isPrivate = (
+      parts[0] === 10 ||
+      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+      (parts[0] === 192 && parts[1] === 168) ||
+      parts[0] === 127
+    );
+    if (isPrivate) return url;
+  }
+
+  if (allowRemote) {
+    console.warn(
+      `CloakLLM: Ollama URL '${url}' points to a non-local address. ` +
+      'PII data will be sent to this remote server.'
+    );
+    return url;
+  }
+
+  throw new Error(
+    `CloakLLM: Ollama URL '${url}' points to a non-local address. ` +
+    'Set llmAllowRemote: true to allow remote Ollama instances. ' +
+    'WARNING: PII data will be sent to the remote server.'
+  );
+}
+
 class LlmDetector {
   /**
    * @param {import('./config').ShieldConfig} config
    */
   constructor(config) {
     this._model = config.llmModel;
-    this._baseUrl = config.llmOllamaUrl.replace(/\/+$/, '');
+    this._baseUrl = _validateOllamaUrl(
+      config.llmOllamaUrl.replace(/\/+$/, ''),
+      config.llmAllowRemote ?? false,
+    );
     this._timeout = Math.ceil(config.llmTimeout / 1000); // curl uses seconds
     this._confidence = config.llmConfidence;
+    this._locale = config.locale ?? 'en';
     /** @type {boolean|null} null = not checked yet */
     this._available = null;
     /** @type {BoundedCache} LRU cache with max 1024 entries */
     this._cache = new BoundedCache(1024);
+    /** @type {Set<string>} Instance-level copy of excluded categories */
+    this._excludedCategories = new Set(EXCLUDED_CATEGORIES);
     /** @type {Map<string, string>} Custom LLM categories: name → description */
     this._customCategories = new Map();
     for (const { name, description = '' } of (config.customLlmCategories ?? [])) {
-      if (EXCLUDED_CATEGORIES.has(name)) {
+      if (this._excludedCategories.has(name)) {
         console.warn(`CloakLLM: Custom LLM category '${name}' conflicts with excluded category — skipped`);
         continue;
       }
@@ -85,10 +154,29 @@ class LlmDetector {
     this._execFileSync = cp.execFileSync;
   }
 
+  /**
+   * Add categories to the excluded list (instance-level, does not affect other instances).
+   * Used for NER/LLM coordination when compromise handles PERSON/ORG/GPE.
+   * @param {string[]} cats
+   */
+  static _cacheKey(text) {
+    return crypto.createHash('sha256').update(text).digest('hex');
+  }
+
+  addExcludedCategories(cats) {
+    for (const cat of cats) {
+      this._excludedCategories.add(cat);
+    }
+  }
+
   get _effectiveCategories() {
     const cats = new Set(LLM_CATEGORIES);
     for (const name of this._customCategories.keys()) {
       cats.add(name);
+    }
+    // Remove instance-level excluded categories
+    for (const cat of this._excludedCategories) {
+      cats.delete(cat);
     }
     return cats;
   }
@@ -116,7 +204,7 @@ class LlmDetector {
 
   _systemPrompt() {
     const cats = [...this._effectiveCategories].sort().join(', ');
-    const excluded = [...EXCLUDED_CATEGORIES].sort().join(', ');
+    const excluded = [...this._excludedCategories].sort().join(', ');
     let prompt = (
       'You are a PII detection engine. Given text, extract sensitive entities.\n' +
       `Return ONLY entities in these categories: ${cats}\n` +
@@ -136,6 +224,11 @@ class LlmDetector {
       for (const [name, desc] of hints) {
         prompt += `\n- ${name}: ${desc}`;
       }
+    }
+    // Append locale hint if available
+    const localeHint = LOCALE_HINTS[this._locale];
+    if (localeHint) {
+      prompt += `\n${localeHint}`;
     }
     return prompt;
   }
@@ -193,11 +286,11 @@ class LlmDetector {
     if (!this._checkAvailable()) return [];
 
     let entities;
-    if (this._cache.has(text)) {
-      entities = this._cache.get(text);
+    if (this._cache.has(LlmDetector._cacheKey(text))) {
+      entities = this._cache.get(LlmDetector._cacheKey(text));
     } else {
       entities = this._queryOllama(text);
-      this._cache.set(text, entities);
+      this._cache.set(LlmDetector._cacheKey(text), entities);
     }
 
     // Sort by value length desc (longer matches first) — copy to avoid mutating cached array

@@ -130,7 +130,14 @@ class DeploymentKeyPair {
       private_key: this.privateKey.toString('base64'),
       public_key: this.publicKey.toString('base64'),
     }, null, 2);
-    fs.writeFileSync(filePath, data, { mode: 0o600 });
+    try {
+      fs.writeFileSync(filePath, data, { mode: 0o600 });
+    } catch (err) {
+      fs.writeFileSync(filePath, data);
+      if (process.platform === 'win32') {
+        console.warn(`CloakLLM: Cannot set restrictive file permissions on Windows for '${filePath}'.`);
+      }
+    }
   }
 
   /**
@@ -152,7 +159,7 @@ class DeploymentKeyPair {
 
 const SIGNED_FIELDS = [
   'version', 'timestamp', 'input_hash', 'output_hash',
-  'entity_count', 'categories', 'detection_passes', 'mode', 'key_id',
+  'entity_count', 'categories', 'detection_passes', 'mode', 'key_id', 'nonce',
 ];
 
 class SanitizationCertificate {
@@ -169,6 +176,7 @@ class SanitizationCertificate {
     this.detection_passes = fields.detection_passes ?? [];
     this.mode = fields.mode ?? 'tokenize';
     this.key_id = fields.key_id ?? '';
+    this.nonce = fields.nonce ?? '';
     this.signature = fields.signature ?? '';
     this.public_key = fields.public_key ?? '';
   }
@@ -193,6 +201,7 @@ class SanitizationCertificate {
     const d = this._signedPayload();
     d.signature = this.signature;
     d.public_key = this.public_key;
+    d.nonce = this.nonce;
     return d;
   }
 
@@ -242,6 +251,7 @@ class SanitizationCertificate {
       detection_passes: [...detectionPasses],
       mode,
       key_id: keypair.keyId,
+      nonce: crypto.randomUUID(),
     });
 
     const payload = canonicalJson(cert._signedPayload());
@@ -266,12 +276,23 @@ class SanitizationCertificate {
    * @returns {SanitizationCertificate}
    */
   static fromDict(d) {
-    return new SanitizationCertificate(d);
+    return new SanitizationCertificate({
+      ...d,
+      nonce: d.nonce ?? '',
+    });
   }
 }
 
 // --- MerkleTree ---
 
+/**
+ * Binary Merkle tree for batch attestation.
+ *
+ * Builds a bottom-up SHA-256 hash tree from an array of leaf hashes.
+ * When a level has an odd number of nodes, the last node is promoted
+ * to the next level without hashing (odd-leaf promotion). This matches
+ * the Python SDK implementation for cross-language compatibility.
+ */
 class MerkleTree {
   /**
    * @param {string[]} leaves - Array of hex hash strings

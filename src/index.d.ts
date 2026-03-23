@@ -3,6 +3,7 @@
  */
 
 export interface ShieldConfigOptions {
+  locale?: string;
   detectEmails?: boolean;
   detectPhones?: boolean;
   detectSsns?: boolean;
@@ -17,13 +18,13 @@ export interface ShieldConfigOptions {
   llmOllamaUrl?: string;
   llmTimeout?: number;
   llmConfidence?: number;
+  llmAllowRemote?: boolean;
   mode?: 'tokenize' | 'redact';
   descriptiveTokens?: boolean;
   entityHashing?: boolean;
   entityHashKey?: string;
   auditEnabled?: boolean;
   logDir?: string;
-  logOriginalValues?: boolean;
   autoMode?: boolean;
   skipModels?: string[];
   attestationKey?: DeploymentKeyPair | null;
@@ -32,6 +33,7 @@ export interface ShieldConfigOptions {
 
 export class ShieldConfig {
   constructor(options?: ShieldConfigOptions);
+  locale: string;
   detectEmails: boolean;
   detectPhones: boolean;
   detectSsns: boolean;
@@ -46,13 +48,13 @@ export class ShieldConfig {
   llmOllamaUrl: string;
   llmTimeout: number;
   llmConfidence: number;
+  llmAllowRemote: boolean;
   mode: 'tokenize' | 'redact';
   descriptiveTokens: boolean;
   entityHashing: boolean;
   entityHashKey: string;
   auditEnabled: boolean;
   logDir: string;
-  logOriginalValues: boolean;
   autoMode: boolean;
   skipModels: string[];
   attestationKey: DeploymentKeyPair | null;
@@ -148,14 +150,14 @@ export class Shield {
     }
   ): string[];
 
-  analyze(text: string): {
+  analyze(text: string, options?: { redactValues?: boolean }): {
     entity_count: number;
     entities: Detection[];
   };
 
   metrics(): Metrics;
   resetMetrics(): void;
-  verifyAudit(): { valid: boolean; errors: string[] };
+  verifyAudit(): { valid: boolean; errors: string[]; finalSeq: number };
   auditStats(): Record<string, any>;
   verifyCertificate(certificate: SanitizationCertificate | Record<string, any>, publicKey?: Buffer | null): boolean;
   static generateAttestationKey(): DeploymentKeyPair;
@@ -165,12 +167,14 @@ export interface Timing {
   total_ms: number;
   detection_ms?: number;
   regex_ms?: number;
+  ner_ms?: number;
   llm_ms?: number;
   tokenization_ms: number;
 }
 
 export interface DetectorTiming {
   regex_ms: number;
+  ner_ms: number;
   llm_ms: number;
 }
 
@@ -185,12 +189,15 @@ export interface Metrics {
   avg_ms: number;
   detection: {
     regex_ms: number;
+    ner_ms: number;
     llm_ms: number;
   };
   tokenization_ms: number;
   entities_detected: number;
   categories: Record<string, number>;
 }
+
+export function isNerAvailable(): boolean;
 
 export class DetectionEngine {
   constructor(config: ShieldConfig);
@@ -230,7 +237,7 @@ export class AuditLogger {
     certificateHash?: string | null;
     keyId?: string | null;
   }): Record<string, any> | null;
-  verifyChain(logFilePath?: string | null): { valid: boolean; errors: string[] };
+  verifyChain(logFilePath?: string | null): { valid: boolean; errors: string[]; finalSeq: number };
   getStats(): Record<string, any>;
 }
 
@@ -290,6 +297,7 @@ export class SanitizationCertificate {
   detection_passes: string[];
   mode: string;
   key_id: string;
+  nonce: string;
   signature: string;
   public_key: string;
   constructor(fields?: Partial<SanitizationCertificate>);
