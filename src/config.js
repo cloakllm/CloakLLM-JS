@@ -70,6 +70,11 @@ class ShieldConfig {
     /** @type {string|null} Path to keypair JSON file */
     this.attestationKeyPath = options.attestationKeyPath ?? process.env.CLOAKLLM_SIGNING_KEY_PATH ?? null;
 
+    // --- Context Analysis ---
+    this.contextAnalysis = options.contextAnalysis ??
+      (process.env.CLOAKLLM_CONTEXT_ANALYSIS ?? 'false').toLowerCase() === 'true';
+    this.contextRiskThreshold = options.contextRiskThreshold ?? 0.7;
+
     _validatePath(this.logDir, 'logDir');
     _validatePath(this.attestationKeyPath, 'attestationKeyPath');
 

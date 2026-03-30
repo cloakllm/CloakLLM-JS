@@ -99,6 +99,7 @@ class AuditLogger {
     metadata = {},
     certificateHash = null,
     keyId = null,
+    riskAssessment = null,
   }) {
     if (!this.config.auditEnabled) return null;
 
@@ -128,6 +129,7 @@ class AuditLogger {
       key_id: keyId,
       prev_hash: this._prevHash,
       metadata,
+      risk_assessment: riskAssessment,
     };
 
     const entryHash = AuditLogger.computeHash(entryData);

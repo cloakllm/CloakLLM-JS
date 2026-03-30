@@ -18,6 +18,7 @@ const { DetectionEngine } = require('./detector');
 const { Tokenizer, TokenMap } = require('./tokenizer');
 const { AuditLogger } = require('./audit');
 const { DeploymentKeyPair, SanitizationCertificate, MerkleTree } = require('./attestation');
+const { ContextAnalyzer } = require('./context-analyzer');
 
 class Shield {
   /**
@@ -40,6 +41,8 @@ class Shield {
     } else if (this.config.attestationKeyPath) {
       this._attestationKey = DeploymentKeyPair.fromFile(this.config.attestationKeyPath);
     }
+    // Context analyzer (opt-in)
+    this._contextAnalyzer = this.config.contextAnalysis ? new ContextAnalyzer() : null;
     // Detection gap warning
     if (!this.detector._nerDetector && !this.config.llmDetection) {
       if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
@@ -145,6 +148,19 @@ class Shield {
       certKeyId = cert.key_id;
     }
 
+    // Context risk analysis (opt-in)
+    let riskAssessment = null;
+    if (this._contextAnalyzer) {
+      const risk = this._contextAnalyzer.analyze(sanitized);
+      riskAssessment = risk;
+      map.riskAssessment = risk;
+      if (risk.risk_score > this.config.contextRiskThreshold) {
+        console.warn(
+          `[cloakllm] Context risk ${risk.risk_score.toFixed(2)} (${risk.risk_level}) exceeds threshold ${this.config.contextRiskThreshold}`
+        );
+      }
+    }
+
     this.audit.log({
       eventType: 'sanitize',
       originalText: text,
@@ -161,6 +177,7 @@ class Shield {
       metadata,
       certificateHash: certHash,
       keyId: certKeyId,
+      riskAssessment,
     });
 
     return [sanitized, map];
@@ -430,6 +447,16 @@ class Shield {
         source: d.source,
       })),
     };
+  }
+
+  /**
+   * Analyze sanitized text for context-based PII leakage risk.
+   * @param {string} sanitizedText - Text containing [CATEGORY_N] tokens
+   * @returns {Object} RiskAssessment
+   */
+  analyzeContextRisk(sanitizedText) {
+    const analyzer = new ContextAnalyzer();
+    return analyzer.analyze(sanitizedText);
   }
 
   /**

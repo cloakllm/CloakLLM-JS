@@ -15,7 +15,8 @@ const { AuditLogger } = require('./audit');
 
 const args = process.argv.slice(2);
 const showPii = args.includes('--show-pii');
-const filteredArgs = args.filter(a => a !== '--show-pii');
+const contextRisk = args.includes('--context-risk');
+const filteredArgs = args.filter(a => a !== '--show-pii' && a !== '--context-risk');
 const command = filteredArgs[0];
 
 function cmdScan() {
@@ -50,6 +51,22 @@ function cmdScan() {
   console.log(`\nToken map (${tokenMap.entityCount} entities):`);
   for (const [token, original] of tokenMap.reverse) {
     console.log(`  ${token} → "${showPii ? original : '***'}"`);
+  }
+
+  // Context risk analysis (opt-in)
+  if (contextRisk) {
+    const risk = shield.analyzeContextRisk(sanitized);
+    console.log(`\n${'─'.repeat(60)}`);
+    console.log(`CONTEXT RISK: ${risk.risk_level.toUpperCase()} (score: ${risk.risk_score.toFixed(3)})`);
+    console.log(`  Token density: ${risk.token_density.toFixed(3)}`);
+    console.log(`  Identifying descriptors: ${risk.identifying_descriptors}`);
+    console.log(`  Relationship edges: ${risk.relationship_edges}`);
+    if (risk.warnings.length > 0) {
+      console.log('  Warnings:');
+      for (const w of risk.warnings) {
+        console.log(`    • ${w}`);
+      }
+    }
   }
 }
 
@@ -127,5 +144,6 @@ switch (command) {
     console.log('');
     console.log('Flags:');
     console.log('  --show-pii       Show raw PII values (default: masked)');
+    console.log('  --context-risk   Analyze sanitized output for context leakage risk');
     break;
 }

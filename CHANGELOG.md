@@ -5,6 +5,20 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-03-30
+
+### Added
+
+- **Context-based PII leakage analysis** — new `ContextAnalyzer` class (`context-analyzer.js`)
+  - Three heuristic signals: token density, identifying descriptors, relationship edges
+  - `shield.analyzeContextRisk(sanitizedText)` — standalone analysis method
+  - `contextAnalysis` config flag for automatic analysis after `sanitize()`
+  - `contextRiskThreshold` config option (default: 0.7)
+  - Risk assessment attached to `tokenMap.riskAssessment` when auto-analysis enabled
+  - Risk assessment included in audit log entries
+  - CLI `--context-risk` flag for `scan` command
+  - TypeScript declarations for `ContextAnalyzer`, `RiskAssessment`
+
 ## [0.4.0] - 2026-03-23
 
 ### Added

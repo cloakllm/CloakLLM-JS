@@ -29,6 +29,8 @@ export interface ShieldConfigOptions {
   skipModels?: string[];
   attestationKey?: DeploymentKeyPair | null;
   attestationKeyPath?: string | null;
+  contextAnalysis?: boolean;
+  contextRiskThreshold?: number;
 }
 
 export class ShieldConfig {
@@ -59,6 +61,17 @@ export class ShieldConfig {
   skipModels: string[];
   attestationKey: DeploymentKeyPair | null;
   attestationKeyPath: string | null;
+  contextAnalysis: boolean;
+  contextRiskThreshold: number;
+}
+
+export interface RiskAssessment {
+  token_density: number;
+  identifying_descriptors: number;
+  relationship_edges: number;
+  risk_score: number;
+  risk_level: 'low' | 'medium' | 'high';
+  warnings: string[];
 }
 
 export interface Detection {
@@ -96,6 +109,7 @@ export class TokenMap {
   certificate: SanitizationCertificate | null;
   batchCertificate: SanitizationCertificate | null;
   merkleTree: { input: MerkleTree; output: MerkleTree } | null;
+  riskAssessment: RiskAssessment | null;
   readonly entityCount: number;
   readonly categories: Record<string, number>;
   readonly entityDetails: EntityDetail[];
@@ -154,6 +168,8 @@ export class Shield {
     entity_count: number;
     entities: Detection[];
   };
+
+  analyzeContextRisk(sanitizedText: string): RiskAssessment;
 
   metrics(): Metrics;
   resetMetrics(): void;
@@ -329,3 +345,9 @@ export function deriveEntityHashKey(
   salt?: Buffer | null,
   info?: Buffer | string
 ): string;
+
+// --- Context Analysis ---
+
+export class ContextAnalyzer {
+  analyze(sanitizedText: string): RiskAssessment;
+}

@@ -39,6 +39,8 @@ class TokenMap {
     this.batchCertificate = null;
     /** @type {Object|null} */
     this.merkleTree = null;
+    /** @type {Object|null} Context risk assessment */
+    this.riskAssessment = null;
   }
 
   /**
