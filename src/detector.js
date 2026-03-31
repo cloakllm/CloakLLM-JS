@@ -43,7 +43,7 @@ const PATTERNS = {
     configKey: 'detectIpAddresses',
   },
   API_KEY: {
-    pattern: /\b(?:sk|pk|api|key|token|secret|bearer)[-_]?[a-zA-Z0-9_]{20,}\b/g,
+    pattern: /\b(?:sk|pk|api|key|token|secret|bearer)[-_]?[a-zA-Z0-9]{20,}\b/g,
     configKey: 'detectApiKeys',
   },
   AWS_KEY: {

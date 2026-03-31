@@ -89,15 +89,15 @@ describe('LlmDetector — successful detection', () => {
     assert.equal(results[0].end, 29);
   });
 
-  it('detects PERSON entity (JS includes NER categories)', () => {
+  it('PERSON excluded from LLM categories (handled by NER)', () => {
     const detector = makeDetector((cmd, args) => {
       const url = args[args.length - 1];
       if (url.includes('/api/tags')) return '200';
       return ollamaResponse([{ value: 'John Smith', category: 'PERSON' }]);
     });
     const results = detector.detect('Meeting with John Smith tomorrow', []);
-    assert.equal(results.length, 1);
-    assert.equal(results[0].category, 'PERSON');
+    // PERSON is in EXCLUDED_CATEGORIES — LLM should not detect it
+    assert.equal(results.length, 0);
   });
 
   it('detects multiple entities', () => {
@@ -273,19 +273,13 @@ describe('LlmDetector — custom categories', () => {
     assert.ok(!prompt.includes('Category hints'));
   });
 
-  it('excluded category (EMAIL) rejected with warning', () => {
-    const warnings = [];
-    const origWarn = console.warn;
-    console.warn = (msg) => warnings.push(msg);
-    try {
-      const detector = new LlmDetector(makeConfig({
+  it('excluded category (EMAIL) rejected at config level', () => {
+    assert.throws(
+      () => makeConfig({
         customLlmCategories: [{ name: 'EMAIL', description: 'Custom email' }],
-      }));
-      assert.ok(!detector._customCategories.has('EMAIL'));
-      assert.ok(warnings.some(w => w.includes('conflicts')));
-    } finally {
-      console.warn = origWarn;
-    }
+      }),
+      /conflicts with built-in/
+    );
   });
 
   it('custom + built-in coexist', () => {

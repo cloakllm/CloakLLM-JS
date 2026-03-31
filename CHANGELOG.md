@@ -5,6 +5,24 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-03-31
+
+### Added
+
+- **Normalized Token Standard** — formal specification for CloakLLM token format
+  - New `token-spec.js` module: canonical regex, category registry, validation utilities
+  - `validateToken()`, `parseToken()`, `isRedactedToken()`, `validateCategoryName()`
+  - `BUILTIN_CATEGORIES`, `CLOAKLLM_TOKEN_PATTERN`, `MAX_TOKEN_LENGTH` constants
+  - TypeScript declarations for all new exports
+
+### Changed
+
+- Tokenizer and stream modules now import from `token-spec` (single source of truth)
+- Config validation now rejects custom LLM categories that collide with built-in names
+- Token regex updated from `[A-Z_]+` to `[A-Z][A-Z0-9_]*` (stricter, spec-conformant)
+- `API_KEY` regex aligned with Python (removed underscore from character class)
+- `LLM_CATEGORIES` aligned with Python: `PERSON`, `ORG`, `GPE` removed (NER-only)
+
 ## [0.5.0] - 2026-03-30
 
 ### Added

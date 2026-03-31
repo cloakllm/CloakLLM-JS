@@ -351,3 +351,26 @@ export function deriveEntityHashKey(
 export class ContextAnalyzer {
   analyze(sanitizedText: string): RiskAssessment;
 }
+
+// --- Token Specification ---
+
+/** Canonical regex pattern string for matching CloakLLM tokens. */
+export const CLOAKLLM_TOKEN_PATTERN: string;
+
+/** Maximum token length (including brackets). */
+export const MAX_TOKEN_LENGTH: number;
+
+/** Set of all built-in category names. */
+export const BUILTIN_CATEGORIES: Set<string>;
+
+/** Return true if the string is a valid CloakLLM token. */
+export function validateToken(token: string): boolean;
+
+/** Parse a token string into { category, suffix } or null. */
+export function parseToken(token: string): { category: string; suffix: string } | null;
+
+/** Return true if the token is a redacted token ([CATEGORY_REDACTED]). */
+export function isRedactedToken(token: string): boolean;
+
+/** Check if a category name is valid (format only). */
+export function validateCategoryName(name: string): boolean;

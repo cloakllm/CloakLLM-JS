@@ -48,7 +48,7 @@ describe('DetectionEngine', () => {
 
   it('detects API keys', () => {
     const engine = new DetectionEngine(new ShieldConfig());
-    const { detections } = engine.detect('Key: sk_live_abc123def456ghi789jkl012');
+    const { detections } = engine.detect('Key: sk_abc123def456ghi789jkl012mno');
     assert.ok(detections.some(d => d.category === 'API_KEY'));
   });
 

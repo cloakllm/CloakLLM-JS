@@ -16,17 +16,16 @@ const cp = require('child_process');
 const crypto = require('crypto');
 const net = require('net');
 
-// Categories the LLM should detect (includes PERSON/ORG/GPE when no NER available)
+// Categories the LLM should detect (excludes regex + NER covered ones)
 const LLM_CATEGORIES = new Set([
-  'PERSON', 'ORG', 'GPE',
   'ADDRESS', 'DATE_OF_BIRTH', 'MEDICAL', 'FINANCIAL',
   'NATIONAL_ID', 'BIOMETRIC', 'USERNAME', 'PASSWORD', 'VEHICLE',
 ]);
 
-// Categories already covered by regex — LLM should NOT detect these
+// Categories already covered by regex or NER — LLM should NOT detect these
 const EXCLUDED_CATEGORIES = new Set([
   'EMAIL', 'PHONE', 'SSN', 'CREDIT_CARD', 'IP_ADDRESS',
-  'API_KEY', 'IBAN', 'JWT',
+  'API_KEY', 'IBAN', 'JWT', 'ORG', 'GPE', 'PERSON',
 ]);
 
 const LOCALE_HINTS = {

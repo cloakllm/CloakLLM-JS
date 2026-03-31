@@ -5,11 +5,13 @@
  * the entire response. Emits text as soon as it's safe to do so.
  */
 
-const ESCAPED_OPEN = '\uFF3B';
-const ESCAPED_CLOSE = '\uFF3D';
-const UNESCAPE_RE = new RegExp(`${ESCAPED_OPEN}([A-Z_]+_(?:\\d+|REDACTED))${ESCAPED_CLOSE}`, 'g');
+const {
+  ESCAPED_OPEN,
+  ESCAPED_CLOSE,
+  MAX_TOKEN_LENGTH: MAX_TOKEN_LEN,
+} = require('./token-spec');
 
-const MAX_TOKEN_LEN = 40;
+const UNESCAPE_RE = new RegExp(`${ESCAPED_OPEN}([A-Z][A-Z0-9_]*_(?:\\d+|REDACTED))${ESCAPED_CLOSE}`, 'g');
 
 class StreamDesanitizer {
     /**

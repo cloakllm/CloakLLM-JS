@@ -10,6 +10,7 @@
  */
 
 const path = require('path');
+const { RESERVED_CATEGORIES } = require('./token-spec');
 
 function _validatePath(pathValue, name) {
   if (!pathValue) return;
@@ -37,6 +38,19 @@ class ShieldConfig {
     this.customPatterns = options.customPatterns ?? [];
     /** @type {Array<{name: string, description: string}>} */
     this.customLlmCategories = options.customLlmCategories ?? [];
+    // Validate custom LLM category names
+    for (const { name } of this.customLlmCategories) {
+      if (!/^[A-Z][A-Z0-9_]*$/.test(name)) {
+        throw new Error(
+          `Invalid custom LLM category name '${name}'. Must match ^[A-Z][A-Z0-9_]*$`
+        );
+      }
+      if (RESERVED_CATEGORIES.has(name)) {
+        throw new Error(
+          `Custom LLM category '${name}' conflicts with built-in category.`
+        );
+      }
+    }
 
     // --- LLM Detection (Pass 2: local LLM via Ollama) ---
     this.llmDetection = options.llmDetection ??

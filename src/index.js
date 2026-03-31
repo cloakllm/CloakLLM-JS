@@ -29,6 +29,15 @@ const {
   MerkleTree,
   deriveEntityHashKey,
 } = require('./attestation');
+const {
+  validateToken,
+  parseToken,
+  validateCategoryName,
+  isRedactedToken,
+  BUILTIN_CATEGORIES,
+  CLOAKLLM_TOKEN_PATTERN,
+  MAX_TOKEN_LENGTH,
+} = require('./token-spec');
 
 module.exports = {
   Shield,
@@ -48,4 +57,11 @@ module.exports = {
   SanitizationCertificate,
   MerkleTree,
   deriveEntityHashKey,
+  validateToken,
+  parseToken,
+  validateCategoryName,
+  isRedactedToken,
+  BUILTIN_CATEGORIES,
+  CLOAKLLM_TOKEN_PATTERN,
+  MAX_TOKEN_LENGTH,
 };

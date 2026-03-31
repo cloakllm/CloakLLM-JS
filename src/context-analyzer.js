@@ -14,7 +14,7 @@
 
 'use strict';
 
-const TOKEN_RE = /\[[A-Z_]+_(?:\d+|REDACTED)\]/gi;
+const TOKEN_RE = /\[[A-Z][A-Z0-9_]*_(?:\d+|REDACTED)\]/gi;
 
 const IDENTIFYING_DESCRIPTORS = new Set([
     'ceo', 'president', 'founder', 'director', 'chairman', 'chairwoman',
