@@ -1,14 +1,13 @@
 /**
  * PII Detection Engine.
  *
- * Multi-pass detection for structured and contextual sensitive data.
- * Pass 1: Regex (built-in + locale + custom patterns)
- * Pass 2: NER via compromise (optional, English only)
- * Pass 3: Local LLM via Ollama (opt-in, any language)
+ * Orchestrates a pipeline of DetectorBackend instances for comprehensive
+ * sensitive data detection. Default pipeline: regex -> NER -> LLM.
+ *
+ * Custom backends can be injected via the `backends` parameter.
  */
 
-const { LOCALE_PATTERNS } = require('./locale-patterns');
-const { NerDetector, isNerAvailable } = require('./ner-detector');
+// NerDetector and LOCALE_PATTERNS moved to backends/ner.js and backends/regex.js
 
 /**
  * @typedef {Object} Detection
@@ -21,6 +20,7 @@ const { NerDetector, isNerAvailable } = require('./ner-detector');
  */
 
 // Ordered by specificity (most specific first)
+// Re-exported for backward compatibility
 const PATTERNS = {
   EMAIL: {
     pattern: /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/g,
@@ -63,90 +63,83 @@ const PATTERNS = {
 class DetectionEngine {
   /**
    * @param {import('./config').ShieldConfig} config
+   * @param {Array<import('./backends/base').DetectorBackend>} [backends] - Custom pipeline
    */
-  constructor(config) {
+  constructor(config, backends = null) {
     this.config = config;
-    this._compiledPatterns = this._buildPatterns();
+    /** @type {Array<import('./backends/base').DetectorBackend>} */
+    this._backends = [];
 
-    // --- NER detector (optional, via compromise) ---
-    this._nerDetector = null;
-    if (isNerAvailable()) {
-      try {
-        this._nerDetector = new NerDetector();
-      } catch {
-        // compromise load failed
-      }
-    }
-
-    // --- LLM detector (opt-in Pass 3) ---
-    this._llmDetector = null;
-    if (config.llmDetection) {
-      const { LlmDetector } = require('./llm-detector');
-      this._llmDetector = new LlmDetector(config);
-    }
-
-    // NER/LLM coordination: if NER handles PERSON/ORG/GPE, tell LLM to skip them
-    if (this._nerDetector && this._llmDetector) {
-      this._llmDetector.addExcludedCategories(['PERSON', 'ORG', 'GPE']);
+    if (backends !== null) {
+      // Custom pipeline
+      this._backends = [...backends];
+    } else {
+      // Default pipeline: regex -> NER -> LLM
+      this._buildDefaultPipeline();
     }
   }
 
-  _buildPatterns() {
-    const compiled = [];
+  _buildDefaultPipeline() {
+    const { RegexBackend } = require('./backends/regex');
+    const { NerBackend } = require('./backends/ner');
+    const { LlmBackend } = require('./backends/llm');
 
-    // Custom patterns first — user-defined patterns take priority
-    for (const { name, pattern: patternStr } of this.config.customPatterns) {
-      try {
-        const regex = new RegExp(patternStr, 'g');
-        if (!this._testRegexSafety(regex)) {
-          console.warn(`CloakLLM: Custom pattern '${name}' failed safety check (potential ReDoS) — skipped`);
-          continue;
-        }
-        compiled.push({ name, pattern: regex });
-      } catch (err) {
-        console.warn(`CloakLLM: Invalid custom pattern '${name}': ${err.message} — skipped`);
+    // Pass 1: Regex (always)
+    this._backends.push(new RegexBackend(this.config));
+
+    // Pass 2: NER (always — uses compromise if available)
+    const nerBackend = new NerBackend();
+    this._backends.push(nerBackend);
+
+    // Pass 3: LLM (opt-in)
+    if (this.config.llmDetection) {
+      const llmBackend = new LlmBackend(this.config);
+      this._backends.push(llmBackend);
+
+      // NER/LLM coordination: if NER handles PERSON/ORG/GPE, tell LLM to skip them
+      if (nerBackend.available) {
+        llmBackend.addExcludedCategories(['PERSON', 'ORG', 'GPE']);
       }
     }
-
-    // Locale patterns second — before built-in so locale-specific patterns
-    // (e.g., PHONE_DE) take priority over universal patterns (e.g., PHONE)
-    // via covered-span overlap checks.
-    const localePatterns = LOCALE_PATTERNS[this.config.locale] || [];
-    for (const [name, pattern] of localePatterns) {
-      if (this._testRegexSafety(pattern)) {
-        compiled.push({ name, pattern: new RegExp(pattern.source, pattern.flags) });
-      }
-    }
-
-    // Built-in patterns third
-    for (const [name, { pattern, configKey }] of Object.entries(PATTERNS)) {
-      if (this.config[configKey] !== false) {
-        compiled.push({ name, pattern });
-      }
-    }
-
-    // Safety-check all patterns (including built-in)
-    for (const { name, pattern } of compiled) {
-      if (!this._testRegexSafety(pattern)) {
-        console.warn(`CloakLLM: Pattern '${name}' failed ReDoS safety check — this is a bug`);
-      }
-    }
-
-    return compiled;
   }
 
+  // --- Backward compatibility properties ---
+
+  /** @returns {NerDetector|null} */
+  get _nerDetector() {
+    for (const backend of this._backends) {
+      if (backend.name === 'ner' && backend._nerDetector) {
+        return backend._nerDetector;
+      }
+    }
+    return null;
+  }
+
+  /** @returns {import('./llm-detector').LlmDetector|null} */
+  get _llmDetector() {
+    for (const backend of this._backends) {
+      if (backend.name === 'llm') {
+        return backend._detector;
+      }
+    }
+    return null;
+  }
+
+  get _compiledPatterns() {
+    for (const backend of this._backends) {
+      if (backend.name === 'regex') {
+        return backend._compiledPatterns;
+      }
+    }
+    return [];
+  }
+
+  /** Backward compat: delegates to RegexBackend instance in pipeline. */
   _testRegexSafety(regex) {
-    const inputs = [
-      'a'.repeat(25) + '!',
-      '1'.repeat(25) + '!',
-      ' '.repeat(25) + '!',
-      'a1 '.repeat(8) + '!',
-      '@'.repeat(25) + '!',
-    ];
-    for (const input of inputs) {
-      const start = performance.now();
-      new RegExp(regex.source, regex.flags).exec(input);
-      if ((performance.now() - start) >= 20) return false;
+    for (const backend of this._backends) {
+      if (typeof backend._testRegexSafety === 'function') {
+        return backend._testRegexSafety(regex);
+      }
     }
     return true;
   }
@@ -154,7 +147,7 @@ class DetectionEngine {
   /**
    * Detect all sensitive entities in text.
    * @param {string} text
-   * @returns {{ detections: Detection[], timing: Object }} Sorted by start position, with per-pass timing
+   * @returns {{ detections: Detection[], timing: Object }}
    */
   detect(text) {
     /** @type {Detection[]} */
@@ -163,56 +156,12 @@ class DetectionEngine {
     const coveredSpans = [];
     const timing = {};
 
-    // --- Pass 1: Regex (fast, high precision for structured data) ---
-    let t0 = performance.now();
-    for (const { name, pattern } of this._compiledPatterns) {
-      // Reset regex state (global flag)
-      const regex = new RegExp(pattern.source, pattern.flags);
-      let match;
-
-      while ((match = regex.exec(text)) !== null) {
-        const start = match.index;
-        const end = start + match[0].length;
-
-        // Skip if overlapping with existing detection
-        if (coveredSpans.some(([s, e]) => start < e && end > s)) {
-          continue;
-        }
-
-        // Skip short phone-like matches
-        if (name === 'PHONE') {
-          const digits = match[0].replace(/[-.\s()+]/g, '');
-          if (digits.length < 7) continue;
-        }
-
-        detections.push({
-          text: match[0],
-          category: name,
-          start,
-          end,
-          confidence: 0.95,
-          source: 'regex',
-        });
-        coveredSpans.push([start, end]);
-      }
+    for (const backend of this._backends) {
+      const t0 = performance.now();
+      const backendDetections = backend.detect(text, coveredSpans);
+      timing[`${backend.name}_ms`] = +(performance.now() - t0).toFixed(2);
+      detections.push(...backendDetections);
     }
-    timing.regex_ms = +(performance.now() - t0).toFixed(2);
-
-    // --- Pass 2: NER via compromise (optional) ---
-    t0 = performance.now();
-    if (this._nerDetector) {
-      const nerDetections = this._nerDetector.detect(text, coveredSpans);
-      detections.push(...nerDetections);
-    }
-    timing.ner_ms = +(performance.now() - t0).toFixed(2);
-
-    // --- Pass 3: Local LLM (semantic/contextual PII, opt-in) ---
-    t0 = performance.now();
-    if (this._llmDetector !== null) {
-      const llmDetections = this._llmDetector.detect(text, coveredSpans);
-      detections.push(...llmDetections);
-    }
-    timing.llm_ms = +(performance.now() - t0).toFixed(2);
 
     // Sort by start position
     detections.sort((a, b) => a.start - b.start);

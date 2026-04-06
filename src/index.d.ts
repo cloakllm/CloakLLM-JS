@@ -119,7 +119,7 @@ export class TokenMap {
 }
 
 export class Shield {
-  constructor(config?: ShieldConfig);
+  constructor(config?: ShieldConfig, options?: { backends?: DetectorBackend[] | null });
   config: ShieldConfig;
   detector: DetectionEngine;
   audit: AuditLogger;
@@ -189,9 +189,10 @@ export interface Timing {
 }
 
 export interface DetectorTiming {
-  regex_ms: number;
-  ner_ms: number;
-  llm_ms: number;
+  regex_ms?: number;
+  ner_ms?: number;
+  llm_ms?: number;
+  [key: string]: number | undefined;
 }
 
 export interface Metrics {
@@ -203,11 +204,7 @@ export interface Metrics {
   };
   total_ms: number;
   avg_ms: number;
-  detection: {
-    regex_ms: number;
-    ner_ms: number;
-    llm_ms: number;
-  };
+  detection: Record<string, number>;
   tokenization_ms: number;
   entities_detected: number;
   categories: Record<string, number>;
@@ -216,8 +213,8 @@ export interface Metrics {
 export function isNerAvailable(): boolean;
 
 export class DetectionEngine {
-  constructor(config: ShieldConfig);
-  detect(text: string): { detections: Detection[]; timing: DetectorTiming };
+  constructor(config: ShieldConfig, backends?: DetectorBackend[] | null);
+  detect(text: string): { detections: Detection[]; timing: Record<string, number> };
 }
 
 export class Tokenizer {
@@ -374,3 +371,34 @@ export function isRedactedToken(token: string): boolean;
 
 /** Check if a category name is valid (format only). */
 export function validateCategoryName(name: string): boolean;
+
+// --- Detection Backends ---
+
+/** Abstract base class for pluggable detection backends. */
+export class DetectorBackend {
+  /** Unique name for this backend (used in timing keys). */
+  get name(): string;
+  /** Detect sensitive entities in text. */
+  detect(text: string, coveredSpans: Array<[number, number]>): Detection[];
+}
+
+/** Regex-based PII detection backend. */
+export class RegexBackend extends DetectorBackend {
+  constructor(config: ShieldConfig);
+  get name(): 'regex';
+}
+
+/** NER detection backend via compromise (optional). */
+export class NerBackend extends DetectorBackend {
+  constructor();
+  get name(): 'ner';
+  /** Whether NER is actually available (compromise installed). */
+  get available(): boolean;
+}
+
+/** LLM-based semantic detection backend via Ollama. */
+export class LlmBackend extends DetectorBackend {
+  constructor(config: ShieldConfig);
+  get name(): 'llm';
+  addExcludedCategories(categories: string[]): void;
+}

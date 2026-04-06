@@ -5,6 +5,33 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-04-06
+
+### Added
+
+- **Pluggable Detection Backends** — `DetectorBackend` base class for custom detection pipelines
+  - New `backends/` module: `DetectorBackend`, `RegexBackend`, `NerBackend`, `LlmBackend`
+  - `DetectionEngine` accepts optional `backends` parameter to replace the default pipeline
+  - `Shield` accepts optional `{ backends }` option, forwarded to `DetectionEngine`
+  - Custom backends implement `get name()` + `detect(text, coveredSpans)` method
+  - TypeScript declarations for all backend classes
+  - All backend classes exported from top-level `cloakllm` package
+
+### Changed
+
+- `DetectionEngine` refactored from inline 3-pass detection to backend pipeline orchestrator
+- Metrics timing keys are now dynamic (`{backend.name}_ms`) instead of hardcoded `regex_ms`/`ner_ms`/`llm_ms`
+- Attestation `detection_passes` derived from active backends instead of config introspection
+- `_emptyMetrics()` changed from static to instance method (reads backend names)
+- `_accumulate()` handles dynamic timing keys from custom backends
+- PATTERNS single source of truth in `detector.js` (backends/regex.js imports from there)
+
+### Removed
+
+- Redundant final regex safety-check sweep in pattern compilation
+- Duplicated `_testRegexSafety` in `DetectionEngine` (now delegates to `RegexBackend`)
+- Unused `LOCALE_PATTERNS` and `NerDetector` imports from `detector.js`
+
 ## [0.5.1] - 2026-03-31
 
 ### Added

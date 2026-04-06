@@ -38,6 +38,12 @@ const {
   CLOAKLLM_TOKEN_PATTERN,
   MAX_TOKEN_LENGTH,
 } = require('./token-spec');
+const {
+  DetectorBackend,
+  RegexBackend,
+  NerBackend,
+  LlmBackend,
+} = require('./backends');
 
 module.exports = {
   Shield,
@@ -64,4 +70,8 @@ module.exports = {
   BUILTIN_CATEGORIES,
   CLOAKLLM_TOKEN_PATTERN,
   MAX_TOKEN_LENGTH,
+  DetectorBackend,
+  RegexBackend,
+  NerBackend,
+  LlmBackend,
 };

@@ -23,13 +23,15 @@ const { ContextAnalyzer } = require('./context-analyzer');
 class Shield {
   /**
    * @param {ShieldConfig} [config]
+   * @param {Object} [options]
+   * @param {Array<import('./backends/base').DetectorBackend>} [options.backends] - Custom detection pipeline
    */
-  constructor(config = null) {
+  constructor(config = null, { backends = null } = {}) {
     this.config = config || new ShieldConfig();
-    this.detector = new DetectionEngine(this.config);
+    this.detector = new DetectionEngine(this.config, backends);
     this.tokenizer = new Tokenizer(this.config);
     this.audit = new AuditLogger(this.config);
-    this._metrics = Shield._emptyMetrics();
+    this._metrics = this._emptyMetrics();
     // Auto-generate entity hash key if hashing enabled but no key provided
     if (this.config.entityHashing && !this.config.entityHashKey) {
       this.config.entityHashKey = crypto.randomBytes(32).toString('hex');
@@ -43,8 +45,10 @@ class Shield {
     }
     // Context analyzer (opt-in)
     this._contextAnalyzer = this.config.contextAnalysis ? new ContextAnalyzer() : null;
-    // Detection gap warning
-    if (!this.detector._nerDetector && !this.config.llmDetection) {
+    // Detection gap warning (only for default pipeline)
+    const hasNer = this.detector._backends.some(b => b.name === 'ner' && b.available !== false);
+    const hasLlm = this.detector._backends.some(b => b.name === 'llm');
+    if (!hasNer && !hasLlm) {
       if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
         console.warn(
           '[cloakllm] Running regex-only detection. ' +
@@ -55,11 +59,22 @@ class Shield {
     }
   }
 
-  static _emptyMetrics() {
+  _emptyMetrics() {
+    const detection = {};
+    if (this.detector && this.detector._backends) {
+      for (const b of this.detector._backends) {
+        detection[`${b.name}_ms`] = 0;
+      }
+    }
+    if (Object.keys(detection).length === 0) {
+      detection.regex_ms = 0;
+      detection.ner_ms = 0;
+      detection.llm_ms = 0;
+    }
     return {
       calls: { sanitize: 0, desanitize: 0, sanitizeBatch: 0, desanitizeBatch: 0 },
       total_ms: 0,
-      detection: { regex_ms: 0, ner_ms: 0, llm_ms: 0 },
+      detection,
       tokenization_ms: 0,
       entities_detected: 0,
       categories: {},
@@ -69,8 +84,11 @@ class Shield {
   _accumulate(callType, totalMs, detectionTiming, tokenizationMs, entityCount, categories) {
     this._metrics.calls[callType]++;
     this._metrics.total_ms += totalMs;
-    for (const key of ['regex_ms', 'ner_ms', 'llm_ms']) {
-      this._metrics.detection[key] += (detectionTiming[key] || 0);
+    for (const [key, value] of Object.entries(detectionTiming)) {
+      if (!(key in this._metrics.detection)) {
+        this._metrics.detection[key] = 0;
+      }
+      this._metrics.detection[key] += value;
     }
     this._metrics.tokenization_ms += tokenizationMs;
     this._metrics.entities_detected += entityCount;
@@ -132,8 +150,7 @@ class Shield {
     let certHash = null;
     let certKeyId = null;
     if (this._attestationKey) {
-      const detectionPasses = ['regex'];
-      if (this.config.llmDetection) detectionPasses.push('llm');
+      const detectionPasses = this.detector._backends.map(b => b.name);
       const cert = SanitizationCertificate.create({
         originalText: text,
         sanitizedText: sanitized,
@@ -251,7 +268,7 @@ class Shield {
     const sanitizedTexts = [];
     const allEntityDetails = [];
     let totalDetections = 0;
-    const combinedDetectionTiming = { regex_ms: 0, ner_ms: 0, llm_ms: 0 };
+    const combinedDetectionTiming = {};
     let totalDetectionMs = 0;
     let totalTokenizationMs = 0;
 
@@ -261,8 +278,8 @@ class Shield {
       let t0 = performance.now();
       const { detections, timing: detTiming } = this.detector.detect(text);
       totalDetectionMs += performance.now() - t0;
-      for (const key of ['regex_ms', 'ner_ms', 'llm_ms']) {
-        combinedDetectionTiming[key] += (detTiming[key] || 0);
+      for (const [key, value] of Object.entries(detTiming)) {
+        combinedDetectionTiming[key] = (combinedDetectionTiming[key] || 0) + value;
       }
 
       t0 = performance.now();
@@ -303,9 +320,9 @@ class Shield {
     const timing = {
       total_ms: +elapsedMs.toFixed(2),
       detection_ms: +totalDetectionMs.toFixed(2),
-      regex_ms: +combinedDetectionTiming.regex_ms.toFixed(2),
-      ner_ms: +combinedDetectionTiming.ner_ms.toFixed(2),
-      llm_ms: +combinedDetectionTiming.llm_ms.toFixed(2),
+      ...Object.fromEntries(
+        Object.entries(combinedDetectionTiming).map(([k, v]) => [k, +v.toFixed(2)])
+      ),
       tokenization_ms: +totalTokenizationMs.toFixed(2),
     };
 
@@ -331,8 +348,7 @@ class Shield {
       const inputTree = new MerkleTree(inputHashes);
       const outputTree = new MerkleTree(outputHashes);
 
-      const detectionPasses = ['regex'];
-      if (this.config.llmDetection) detectionPasses.push('llm');
+      const detectionPasses = this.detector._backends.map(b => b.name);
 
       const cert = SanitizationCertificate.create({
         entityCount: totalDetections,
@@ -469,11 +485,9 @@ class Shield {
       calls: { ...this._metrics.calls },
       total_ms: +this._metrics.total_ms.toFixed(2),
       avg_ms: totalCalls ? +(this._metrics.total_ms / totalCalls).toFixed(2) : 0,
-      detection: {
-        regex_ms: +this._metrics.detection.regex_ms.toFixed(2),
-        ner_ms: +this._metrics.detection.ner_ms.toFixed(2),
-        llm_ms: +this._metrics.detection.llm_ms.toFixed(2),
-      },
+      detection: Object.fromEntries(
+        Object.entries(this._metrics.detection).map(([k, v]) => [k, +v.toFixed(2)])
+      ),
       tokenization_ms: +this._metrics.tokenization_ms.toFixed(2),
       entities_detected: this._metrics.entities_detected,
       categories: { ...this._metrics.categories },
@@ -482,7 +496,7 @@ class Shield {
 
   /** Reset accumulated performance metrics. */
   resetMetrics() {
-    this._metrics = Shield._emptyMetrics();
+    this._metrics = this._emptyMetrics();
   }
 
   /** Verify the integrity of all audit logs. */

@@ -991,7 +991,7 @@ describe('Metrics & Timing', () => {
     const engine = new DetectionEngine(new ShieldConfig());
     const { timing } = engine.detect('Email john@acme.com');
     assert.ok('regex_ms' in timing);
-    assert.ok('llm_ms' in timing);
+    // llm_ms only present when LLM detection is enabled
     assert.ok(typeof timing.regex_ms === 'number');
   });
 
