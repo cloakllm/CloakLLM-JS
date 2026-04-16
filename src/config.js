@@ -84,6 +84,24 @@ class ShieldConfig {
     /** @type {string|null} Path to keypair JSON file */
     this.attestationKeyPath = options.attestationKeyPath ?? process.env.CLOAKLLM_SIGNING_KEY_PATH ?? null;
 
+    // --- Compliance Mode (v0.6.0) ---
+    // When set, enforces Article 12-compliant audit log structure.
+    // Accepted values: "eu_ai_act_article12" | null
+    /** @type {'eu_ai_act_article12'|null} */
+    this.complianceMode = options.complianceMode ?? process.env.CLOAKLLM_COMPLIANCE_MODE ?? null;
+    const _validComplianceModes = [null, 'eu_ai_act_article12'];
+    if (!_validComplianceModes.includes(this.complianceMode)) {
+      throw new Error(
+        `Invalid complianceMode '${this.complianceMode}'. Must be 'eu_ai_act_article12' or null.`
+      );
+    }
+    // Retention hint included in compliance-mode audit entries (180 = Article 12 minimum).
+    this.retentionHintDays = options.retentionHintDays ?? 180;
+    if (this.retentionHintDays < 1) {
+      throw new Error(`retentionHintDays must be >= 1 (got ${this.retentionHintDays}).`);
+    }
+    // Note: KMS-based key providers are Python-only for v0.6. JS uses local Ed25519 keys.
+
     // --- Context Analysis ---
     this.contextAnalysis = options.contextAnalysis ??
       (process.env.CLOAKLLM_CONTEXT_ANALYSIS ?? 'false').toLowerCase() === 'true';

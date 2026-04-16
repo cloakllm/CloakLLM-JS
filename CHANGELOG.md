@@ -5,6 +5,27 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-04-16
+
+### Added
+
+- **Article 12 Compliance Mode** — formal EU AI Act compliance profile
+  - `new ShieldConfig({ complianceMode: 'eu_ai_act_article12' })` enforces compliant audit log structure
+  - Audit entries gain four new fields: `compliance_version`, `article_ref`, `retention_hint_days`, `pii_in_log`
+  - Compliance fields are part of the SHA-256 hash chain (tamper-detectable)
+  - Configurable retention hint via `ShieldConfig({ retentionHintDays: N })` — defaults to 180
+- **`shield.complianceSummary()`** — structured coverage map of EU AI Act and GDPR articles
+- **`shield.exportComplianceConfig(path)`** — exports a JSON snapshot for auditors
+- **`shield.verifyAudit({ outputFormat: 'compliance_report' })`** — structured report with `verdict: 'COMPLIANT' | 'NON_COMPLIANT'`
+- **`AuditLogger.verifyChain({ outputFormat })`** — same compliance report shape at the lower level
+- **`_assertNoPiiInEntry` runtime guard** in `audit.js` — refuses entries with forbidden PII fields in `entity_details`
+
+### Notes
+
+- All changes backward-compatible. Default behavior unchanged when `complianceMode` is `null`.
+- `shield.verifyAudit()` without arguments returns the existing `{valid, errors, finalSeq}` shape.
+- KMS-backed signing keys are Python-only in v0.6 — JS continues to use local Ed25519 keys.
+
 ## [0.5.2] - 2026-04-06
 
 ### Added

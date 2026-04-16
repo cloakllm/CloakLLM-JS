@@ -12,6 +12,29 @@ const path = require('path');
 
 const GENESIS_HASH = '0'.repeat(64);
 
+const _PII_FORBIDDEN_KEYS = ['original_value', 'original_text', 'raw_text', 'plain_text', 'value'];
+
+/**
+ * Runtime invariant guard for compliance mode.
+ * Asserts that no entity-level fields contain raw/original PII text.
+ * Throws if violated.
+ */
+function _assertNoPiiInEntry(entryData) {
+  const details = entryData.entity_details || [];
+  for (let i = 0; i < details.length; i++) {
+    const detail = details[i];
+    if (!detail || typeof detail !== 'object') continue;
+    for (const forbidden of _PII_FORBIDDEN_KEYS) {
+      if (forbidden in detail) {
+        throw new Error(
+          `COMPLIANCE VIOLATION: entity_details[${i}] contains forbidden ` +
+          `field '${forbidden}'. Audit logs must not contain original PII.`
+        );
+      }
+    }
+  }
+}
+
 class AuditLogger {
   /**
    * @param {import('./config').ShieldConfig} config
@@ -132,6 +155,16 @@ class AuditLogger {
       risk_assessment: riskAssessment,
     };
 
+    // Compliance mode injection (v0.6.0) — fields are part of the hash chain.
+    if (this.config.complianceMode === 'eu_ai_act_article12') {
+      entryData.compliance_version = 'eu_ai_act_article12_v1';
+      entryData.article_ref = ['EU_AI_Act_Art_12', 'EU_AI_Act_Art_19'];
+      entryData.retention_hint_days = this.config.retentionHintDays;
+      entryData.pii_in_log = false;
+      // Runtime invariant: no PII may leak into entity_details
+      _assertNoPiiInEntry(entryData);
+    }
+
     const entryHash = AuditLogger.computeHash(entryData);
     entryData.entry_hash = entryHash;
 
@@ -151,14 +184,60 @@ class AuditLogger {
 
   /**
    * Verify the integrity of the entire audit chain.
-   * @param {string} [logFilePath] - Specific file, or all files in logDir
-   * @returns {{ valid: boolean, errors: string[] }}
+   *
+   * @param {Object} [options]
+   * @param {string} [options.logFilePath] - Specific file, or all files in logDir
+   * @param {'compliance_report'} [options.outputFormat] - When set, returns a
+   *   structured compliance report dict instead of the default { valid, errors, finalSeq }.
+   *   When omitted, the existing return shape is preserved (backward compatible).
+   *
+   * Backward-compat: passing a string (the old `logFilePath` positional argument)
+   * is still accepted.
+   *
+   * @returns {{ valid: boolean, errors: string[], finalSeq: number } | Object}
    */
-  verifyChain(logFilePath = null) {
+  verifyChain(options = null) {
+    let logFilePath = null;
+    let outputFormat = null;
+    if (typeof options === 'string') {
+      logFilePath = options;
+    } else if (options && typeof options === 'object') {
+      logFilePath = options.logFilePath ?? null;
+      outputFormat = options.outputFormat ?? null;
+    }
+    const reportEnabled = outputFormat === 'compliance_report';
+
     const errors = [];
     const files = logFilePath ? [logFilePath] : this._getLogFiles();
 
-    if (files.length === 0) return { valid: true, errors: [], finalSeq: -1 };
+    // Compliance-report aggregates
+    let firstTs = null;
+    let lastTs = null;
+    let totalEntries = 0;
+    let complianceModeEntries = 0;
+    let nonComplianceModeEntries = 0;
+    let certificatesPresent = 0;
+    const piiCategoriesDetected = {};
+    let piiInLogs = false;
+
+    if (files.length === 0) {
+      if (reportEnabled) {
+        return AuditLogger._buildComplianceReport({
+          auditDir: this._logDir,
+          firstTs: null,
+          lastTs: null,
+          totalEntries: 0,
+          complianceModeEntries: 0,
+          nonComplianceModeEntries: 0,
+          certificatesPresent: 0,
+          piiCategoriesDetected: {},
+          piiInLogs: false,
+          chainValid: true,
+          anomalies: [],
+        });
+      }
+      return { valid: true, errors: [], finalSeq: -1 };
+    }
 
     let prevHash = GENESIS_HASH;
     let finalSeq = -1;
@@ -190,6 +269,32 @@ class AuditLogger {
           );
         }
 
+        // Compliance-report aggregation (before deleting entry_hash)
+        if (reportEnabled) {
+          totalEntries += 1;
+          const ts = entry.timestamp;
+          if (ts) {
+            if (firstTs === null || ts < firstTs) firstTs = ts;
+            if (lastTs === null || ts > lastTs) lastTs = ts;
+          }
+          if (entry.compliance_version) {
+            complianceModeEntries += 1;
+            if (entry.pii_in_log === true) {
+              piiInLogs = true;
+              errors.push(
+                `${fname}:${i + 1} seq=${entry.seq} — ` +
+                `COMPLIANCE VIOLATION: pii_in_log=true`
+              );
+            }
+          } else {
+            nonComplianceModeEntries += 1;
+          }
+          if (entry.certificate_hash) certificatesPresent += 1;
+          for (const [cat, count] of Object.entries(entry.categories || {})) {
+            piiCategoriesDetected[cat] = (piiCategoriesDetected[cat] || 0) + count;
+          }
+        }
+
         // Recompute entry hash
         const storedHash = entry.entry_hash;
         delete entry.entry_hash;
@@ -206,7 +311,48 @@ class AuditLogger {
       }
     }
 
-    return { valid: errors.length === 0, errors, finalSeq };
+    const chainValid = errors.length === 0;
+
+    if (reportEnabled) {
+      return AuditLogger._buildComplianceReport({
+        auditDir: this._logDir,
+        firstTs,
+        lastTs,
+        totalEntries,
+        complianceModeEntries,
+        nonComplianceModeEntries,
+        certificatesPresent,
+        piiCategoriesDetected,
+        piiInLogs,
+        chainValid,
+        anomalies: errors,
+      });
+    }
+
+    return { valid: chainValid, errors, finalSeq };
+  }
+
+  static _buildComplianceReport({
+    auditDir, firstTs, lastTs, totalEntries,
+    complianceModeEntries, nonComplianceModeEntries,
+    certificatesPresent, piiCategoriesDetected, piiInLogs,
+    chainValid, anomalies,
+  }) {
+    const verdict = (chainValid && !piiInLogs) ? 'COMPLIANT' : 'NON_COMPLIANT';
+    return {
+      audit_dir: auditDir,
+      period: { from: firstTs, to: lastTs },
+      total_entries: totalEntries,
+      chain_integrity: chainValid ? 'verified' : 'broken',
+      pii_in_logs: piiInLogs,
+      compliance_mode_entries: complianceModeEntries,
+      non_compliance_mode_entries: nonComplianceModeEntries,
+      pii_categories_detected: piiCategoriesDetected,
+      certificates_present: certificatesPresent,
+      anomalies,
+      generated_at: new Date().toISOString(),
+      verdict,
+    };
   }
 
   /**

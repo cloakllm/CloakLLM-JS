@@ -29,6 +29,8 @@ export interface ShieldConfigOptions {
   skipModels?: string[];
   attestationKey?: DeploymentKeyPair | null;
   attestationKeyPath?: string | null;
+  complianceMode?: 'eu_ai_act_article12' | null;
+  retentionHintDays?: number;
   contextAnalysis?: boolean;
   contextRiskThreshold?: number;
 }
@@ -61,6 +63,8 @@ export class ShieldConfig {
   skipModels: string[];
   attestationKey: DeploymentKeyPair | null;
   attestationKeyPath: string | null;
+  complianceMode: 'eu_ai_act_article12' | null;
+  retentionHintDays: number;
   contextAnalysis: boolean;
   contextRiskThreshold: number;
 }
@@ -173,10 +177,52 @@ export class Shield {
 
   metrics(): Metrics;
   resetMetrics(): void;
-  verifyAudit(): { valid: boolean; errors: string[]; finalSeq: number };
+  verifyAudit(options?: {
+    logDir?: string | null;
+    outputFormat?: 'compliance_report' | null;
+  }): { valid: boolean; errors: string[]; finalSeq: number } | ComplianceReport;
   auditStats(): Record<string, any>;
+  complianceSummary(): ComplianceSummary;
+  exportComplianceConfig(outPath?: string): string;
   verifyCertificate(certificate: SanitizationCertificate | Record<string, any>, publicKey?: Buffer | null): boolean;
   static generateAttestationKey(): DeploymentKeyPair;
+}
+
+export interface ComplianceArticleEntry {
+  article: string;
+  status: 'satisfied' | 'partial' | 'not_addressed';
+  notes: string;
+}
+
+export interface ComplianceSummary {
+  compliance_mode: 'eu_ai_act_article12' | null;
+  articles_addressed: ComplianceArticleEntry[];
+  config_snapshot: {
+    audit: boolean;
+    compliance_mode: 'eu_ai_act_article12' | null;
+    mode: 'tokenize' | 'redact';
+    entity_hashing: boolean;
+    attestation_enabled: boolean;
+    retention_hint_days: number;
+  };
+  generated_at: string;
+  cloakllm_version: string;
+  note?: string;
+}
+
+export interface ComplianceReport {
+  audit_dir: string;
+  period: { from: string | null; to: string | null };
+  total_entries: number;
+  chain_integrity: 'verified' | 'broken';
+  pii_in_logs: boolean;
+  compliance_mode_entries: number;
+  non_compliance_mode_entries: number;
+  pii_categories_detected: Record<string, number>;
+  certificates_present: number;
+  anomalies: string[];
+  generated_at: string;
+  verdict: 'COMPLIANT' | 'NON_COMPLIANT';
 }
 
 export interface Timing {
@@ -250,7 +296,9 @@ export class AuditLogger {
     certificateHash?: string | null;
     keyId?: string | null;
   }): Record<string, any> | null;
-  verifyChain(logFilePath?: string | null): { valid: boolean; errors: string[]; finalSeq: number };
+  verifyChain(
+    options?: string | { logFilePath?: string; outputFormat?: 'compliance_report' } | null
+  ): { valid: boolean; errors: string[]; finalSeq: number } | ComplianceReport;
   getStats(): Record<string, any>;
 }
 
