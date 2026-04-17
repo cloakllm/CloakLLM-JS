@@ -35,7 +35,10 @@ const PATTERNS = {
     configKey: 'detectCreditCards',
   },
   PHONE: {
-    pattern: /(?:\+\d{1,3}[-.\s])?(?:\(?\d{2,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{3,4}\b/g,
+    // v0.6.1 H1.3: tightened. Parens REQUIRE both, bare area code REQUIRES
+    // trailing separator. Eliminates ambiguity but still matches `+1-555-0142`
+    // (middle area-code group is fully optional).
+    pattern: /(?<!\d)(?:\+\d{1,3}[-.\s])?(?:\(\d{2,4}\)[-.\s]?|\d{2,4}[-.\s])?\d{3,4}[-.\s]?\d{3,4}(?!\d)/g,
     configKey: 'detectPhones',
   },
   IP_ADDRESS: {
@@ -43,7 +46,9 @@ const PATTERNS = {
     configKey: 'detectIpAddresses',
   },
   API_KEY: {
-    pattern: /\b(?:sk|pk|api|key|token|secret|bearer)[-_]?[a-zA-Z0-9]{20,}\b/g,
+    // v0.6.1 F1: bounded upper at 512. Body includes - and _ so multi-segment
+    // keys (Anthropic sk-ant-api03-, GitHub fine-grained github_pat_X_Y) match.
+    pattern: /\b(?:sk|pk|api|key|token|secret|bearer)[-_]?[a-zA-Z0-9_-]{20,512}\b/g,
     configKey: 'detectApiKeys',
   },
   AWS_KEY: {
@@ -55,7 +60,8 @@ const PATTERNS = {
     configKey: 'detectApiKeys',
   },
   IBAN: {
-    pattern: /\b[A-Z]{2}\d{2}\s?[\dA-Z]{4}\s?(?:[\dA-Z]{4}\s?){2,7}[\dA-Z]{1,4}\b/g,
+    // v0.6.1 H1.3: separator moved BEFORE each 4-char group to eliminate split ambiguity.
+    pattern: /\b[A-Z]{2}\d{2}(?:\s?[\dA-Z]{4}){2,7}(?:\s?[\dA-Z]{1,4})?\b/g,
     configKey: 'detectIban',
   },
 };

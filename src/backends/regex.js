@@ -27,17 +27,23 @@ class RegexBackend extends DetectorBackend {
   }
 
   _testRegexSafety(regex) {
+    // v0.6.1 H1.2: expanded corpus for previously-skipped built-ins.
     const inputs = [
       'a'.repeat(25) + '!',
       '1'.repeat(25) + '!',
       ' '.repeat(25) + '!',
       'a1 '.repeat(8) + '!',
       '@'.repeat(25) + '!',
+      '1'.repeat(5000),               // PHONE / locale phones
+      'A1'.repeat(2500),              // API_KEY / IBAN
+      'AAAA'.repeat(100),             // IBAN
+      '1234-'.repeat(1000),           // PHONE separators
+      'sk_' + 'a'.repeat(1000),       // API_KEY long bearer
     ];
     for (const input of inputs) {
       const start = performance.now();
       new RegExp(regex.source, regex.flags).exec(input);
-      if ((performance.now() - start) >= 20) return false;
+      if ((performance.now() - start) >= 100) return false;
     }
     return true;
   }
@@ -67,11 +73,21 @@ class RegexBackend extends DetectorBackend {
       }
     }
 
-    // Built-in patterns third (hardcoded, pre-validated — no safety check needed)
+    // Built-in patterns third.
+    // v0.6.1 H1.1: built-in patterns are now also gated by the safety check
+    // (previously skipped). This caught real bugs in PHONE/IBAN that had
+    // been shipping since v0.1.0.
     for (const [name, { pattern, configKey }] of Object.entries(PATTERNS)) {
-      if (this.config[configKey] !== false) {
-        compiled.push({ name, pattern });
+      if (this.config[configKey] === false) continue;
+      if (!this._testRegexSafety(pattern)) {
+        console.warn(
+          `CloakLLM: built-in pattern '${name}' failed ReDoS safety check ` +
+          `(potential catastrophic backtracking) — skipped. This indicates ` +
+          `a regression. Please file a bug.`
+        );
+        continue;
       }
+      compiled.push({ name, pattern });
     }
 
     return compiled;

@@ -31,6 +31,7 @@ export interface ShieldConfigOptions {
   attestationKeyPath?: string | null;
   complianceMode?: 'eu_ai_act_article12' | null;
   retentionHintDays?: number;
+  maxInputLength?: number;
   contextAnalysis?: boolean;
   contextRiskThreshold?: number;
 }
@@ -65,6 +66,7 @@ export class ShieldConfig {
   attestationKeyPath: string | null;
   complianceMode: 'eu_ai_act_article12' | null;
   retentionHintDays: number;
+  maxInputLength: number;
   contextAnalysis: boolean;
   contextRiskThreshold: number;
 }
@@ -180,6 +182,7 @@ export class Shield {
   verifyAudit(options?: {
     logDir?: string | null;
     outputFormat?: 'compliance_report' | null;
+    legacyCanonical?: boolean;
   }): { valid: boolean; errors: string[]; finalSeq: number } | ComplianceReport;
   auditStats(): Record<string, any>;
   complianceSummary(): ComplianceSummary;

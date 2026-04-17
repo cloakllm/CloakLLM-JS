@@ -9,21 +9,108 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { canonicalJson, _legacyCanonicalJson } = require('./_canonical');
 
 const GENESIS_HASH = '0'.repeat(64);
 
 const _PII_FORBIDDEN_KEYS = ['original_value', 'original_text', 'raw_text', 'plain_text', 'value'];
 
+// v0.6.1 B3: allow-list schema validator. Always-on (not gated on complianceMode).
+// See cloakllm-py/cloakllm/audit.py B3 docstring for full rationale.
+const _ENTRY_ALLOWED_KEYS = new Set([
+  'seq', 'event_id', 'timestamp', 'event_type', 'model', 'provider',
+  'entity_count', 'categories', 'tokens_used', 'prompt_hash', 'sanitized_hash',
+  'latency_ms', 'mode', 'entity_details', 'timing', 'certificate_hash',
+  'key_id', 'prev_hash', 'entry_hash', 'metadata', 'risk_assessment',
+  // v0.6.0 compliance-mode fields
+  'compliance_version', 'article_ref', 'retention_hint_days', 'pii_in_log',
+]);
+
+// Verified against actual code (tokenizer.js:109-120 + Shield.sanitizeBatch
+// adds text_index). 9 keys total.
+const _ENTITY_DETAIL_ALLOWED_KEYS = new Set([
+  'category', 'start', 'end', 'length', 'confidence',
+  'source', 'token', 'entity_hash', 'text_index',
+]);
+
+const _METADATA_MAX_VALUE_LEN = 256;
+const _METADATA_MAX_DEPTH = 3;
+
+function _validateMetadataValue(value, depth, path) {
+  if (depth > _METADATA_MAX_DEPTH) {
+    throw new Error(
+      `AUDIT SCHEMA VIOLATION: metadata${path} exceeds max nesting depth of ${_METADATA_MAX_DEPTH}.`
+    );
+  }
+  if (value === null || value === undefined) return;
+  const t = typeof value;
+  if (t === 'string') {
+    if (value.length > _METADATA_MAX_VALUE_LEN) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: metadata${path} string exceeds ` +
+        `${_METADATA_MAX_VALUE_LEN} chars (got ${value.length}). ` +
+        `Long strings risk leaking PII into audit logs.`
+      );
+    }
+    return;
+  }
+  if (t === 'number' || t === 'boolean') return;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      _validateMetadataValue(value[i], depth + 1, `${path}[${i}]`);
+    }
+    return;
+  }
+  if (t === 'object') {
+    for (const k of Object.keys(value)) {
+      if (typeof k !== 'string') {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: metadata${path} key ${JSON.stringify(k)} is not a string.`
+        );
+      }
+      // skip prototype-pollution vectors
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+      _validateMetadataValue(value[k], depth + 1, `${path}.${k}`);
+    }
+    return;
+  }
+  throw new Error(
+    `AUDIT SCHEMA VIOLATION: metadata${path} has disallowed type ${t}. ` +
+    `Allowed: string, number, boolean, null, array of those, object of those.`
+  );
+}
+
 /**
- * Runtime invariant guard for compliance mode.
- * Asserts that no entity-level fields contain raw/original PII text.
+ * v0.6.1 B3: always-on allow-list validator for audit entries. Asserts:
+ *  - top-level keys are in the allow-list (rejects unknown fields)
+ *  - entity_details elements have only the 9 verified-allowed keys
+ *  - metadata values are strict-typed and bounded
  * Throws if violated.
  */
-function _assertNoPiiInEntry(entryData) {
+function _validateAuditEntrySchema(entryData) {
+  // Top-level keys
+  for (const k of Object.keys(entryData)) {
+    if (!_ENTRY_ALLOWED_KEYS.has(k)) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: top-level key ${JSON.stringify(k)} is not in ` +
+        `the allow-list. This guard prevents arbitrary keys (which may ` +
+        `contain PII) from being written to audit logs.`
+      );
+    }
+  }
+
+  // entity_details
   const details = entryData.entity_details || [];
   for (let i = 0; i < details.length; i++) {
     const detail = details[i];
-    if (!detail || typeof detail !== 'object') continue;
+    if (!detail || typeof detail !== 'object' || Array.isArray(detail)) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: entity_details[${i}] is not a plain object ` +
+        `(got ${detail === null ? 'null' : typeof detail}).`
+      );
+    }
+    // Check the legacy denylist FIRST so known-PII keys produce the
+    // recognizable "COMPLIANCE VIOLATION" message.
     for (const forbidden of _PII_FORBIDDEN_KEYS) {
       if (forbidden in detail) {
         throw new Error(
@@ -32,7 +119,43 @@ function _assertNoPiiInEntry(entryData) {
         );
       }
     }
+    for (const k of Object.keys(detail)) {
+      if (!_ENTITY_DETAIL_ALLOWED_KEYS.has(k)) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: entity_details[${i}] contains disallowed ` +
+          `key ${JSON.stringify(k)}. Allowed: ` +
+          `${Array.from(_ENTITY_DETAIL_ALLOWED_KEYS).sort().join(', ')}.`
+        );
+      }
+    }
   }
+
+  // metadata
+  const metadata = entryData.metadata;
+  if (metadata !== null && metadata !== undefined && Object.keys(metadata).length > 0) {
+    if (typeof metadata !== 'object' || Array.isArray(metadata)) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: metadata must be a plain object ` +
+        `(got ${Array.isArray(metadata) ? 'array' : typeof metadata}).`
+      );
+    }
+    for (const k of Object.keys(metadata)) {
+      if (typeof k !== 'string') {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: metadata key ${JSON.stringify(k)} must be a string.`
+        );
+      }
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+      _validateMetadataValue(metadata[k], 1, `.${k}`);
+    }
+  }
+}
+
+/**
+ * Deprecated v0.6.1 alias for the validator. Use _validateAuditEntrySchema.
+ */
+function _assertNoPiiInEntry(entryData) {
+  return _validateAuditEntrySchema(entryData);
 }
 
 class AuditLogger {
@@ -87,18 +210,20 @@ class AuditLogger {
 
   /**
    * Compute SHA-256 hash of entry data.
-   * @param {Object} data
+   *
+   * @param {Object} data - The audit entry dict.
+   * @param {Object} [options]
+   * @param {boolean} [options.legacyCanonical=false] - When true, use the
+   *   v0.6.0-compatible canonicalizer (replacer-based JSON.stringify). Used
+   *   ONLY by `verifyChain` when the caller opts in to verifying a pre-v0.6.1
+   *   chain. Sunset in v0.7.0.
    * @returns {string}
    */
-  static computeHash(data) {
-    // Deterministic serialization: recursively sort keys at all levels
-    const sorted = JSON.stringify(data, (_, v) => {
-      if (v && typeof v === 'object' && !Array.isArray(v)) {
-        return Object.keys(v).sort().reduce((o, k) => { o[k] = v[k]; return o; }, {});
-      }
-      return v;
-    });
-    return crypto.createHash('sha256').update(sorted).digest('hex');
+  static computeHash(data, options = null) {
+    const legacy = options && options.legacyCanonical === true;
+    const encoder = legacy ? _legacyCanonicalJson : canonicalJson;
+    const canonical = encoder(data);
+    return crypto.createHash('sha256').update(canonical).digest('hex');
   }
 
   /**
@@ -161,9 +286,11 @@ class AuditLogger {
       entryData.article_ref = ['EU_AI_Act_Art_12', 'EU_AI_Act_Art_19'];
       entryData.retention_hint_days = this.config.retentionHintDays;
       entryData.pii_in_log = false;
-      // Runtime invariant: no PII may leak into entity_details
-      _assertNoPiiInEntry(entryData);
     }
+
+    // v0.6.1 B3: ALWAYS-ON allow-list schema validation. The no-PII-in-logs
+    // invariant is a project-wide guarantee, not a compliance-mode feature.
+    _validateAuditEntrySchema(entryData);
 
     const entryHash = AuditLogger.computeHash(entryData);
     entryData.entry_hash = entryHash;
@@ -199,11 +326,20 @@ class AuditLogger {
   verifyChain(options = null) {
     let logFilePath = null;
     let outputFormat = null;
+    let legacyCanonical = false;
     if (typeof options === 'string') {
       logFilePath = options;
     } else if (options && typeof options === 'object') {
       logFilePath = options.logFilePath ?? null;
       outputFormat = options.outputFormat ?? null;
+      legacyCanonical = options.legacyCanonical === true;
+    }
+    if (legacyCanonical) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[cloakllm] legacyCanonical=true is a backward-compat shim for ' +
+        'v0.5.x / v0.6.0 audit chains; sunset in v0.7.0.'
+      );
     }
     const reportEnabled = outputFormat === 'compliance_report';
 
@@ -295,10 +431,10 @@ class AuditLogger {
           }
         }
 
-        // Recompute entry hash
+        // Recompute entry hash (legacyCanonical thread-through)
         const storedHash = entry.entry_hash;
         delete entry.entry_hash;
-        const recomputed = AuditLogger.computeHash(entry);
+        const recomputed = AuditLogger.computeHash(entry, { legacyCanonical });
         if (storedHash !== recomputed) {
           errors.push(
             `${fname}:${i + 1} seq=${entry.seq} — ` +

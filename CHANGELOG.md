@@ -5,6 +5,34 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-04-16
+
+### Security (blocker fixes from internal audit)
+
+- **B1 — Cross-language canonical JSON.** Replaces the v0.6.0 replacer-based `JSON.stringify` with a hand-rolled canonical serializer (`src/_canonical.js::canonicalJson`) that produces byte-identical output to the Python SDK, including for non-ASCII keys/values, numeric-string keys, nested arrays, and prototype-pollution vectors (`__proto__` / `constructor` / `prototype` keys are skipped). Cross-SDK certificate / audit-chain verification now works for non-ASCII data.
+- **B3 — Always-on allow-list audit schema validator.** Replaces v0.6.0's compliance-mode-gated denylist. Every audit write enforces:
+  - top-level keys must be in the allow-list;
+  - `entity_details` elements may only contain the 9 verified-allowed keys (`category, start, end, length, confidence, source, token, entity_hash, text_index`);
+  - `metadata` values must be strict-typed and bounded (256-char value cap, depth 3, scalar/list/dict only).
+- **B4 — MCP defaults to compliance mode** (Python `cloakllm-mcp` change; documented for cross-SDK awareness).
+
+### Security (high-severity fixes)
+
+- **H1 — ReDoS hardening.** Built-in regex patterns now go through the `_testRegexSafety` harness. `PHONE` and `IBAN` rewritten to eliminate ambiguity. New `_canonical.js` is prototype-pollution-safe (H9).
+- **H1.4 — Input length cap.** New `ShieldConfig({ maxInputLength: ... })` (default 1MB). Raises on oversize input.
+- **F1 — API_KEY pattern bound to `{20,512}`** with body allowing `-` and `_` so multi-segment keys (Anthropic, GitHub fine-grained PAT) are detected.
+- **H6 — Dependency hygiene.** `npm audit` added to CI (non-fatal until v0.7). Dependabot config added.
+- **H7 — CI/CD hardening.** All workflows now have explicit `permissions:` and `concurrency:` groups.
+- **F5 — `legacyCanonical` shim.** Verify v0.5.x/v0.6.0 chains with `shield.verifyAudit({ legacyCanonical: true })` or `auditLogger.verifyChain({ legacyCanonical: true })`. Sunset in v0.7.0.
+
+### Deprecations
+
+- **F4 — `shield.analyze()` default `redactValues: false`.** v0.7.0 flips to `true`. Calling without explicit value emits a console warning.
+
+### Known issues
+
+- **`llmAllowRemote: true` SSRF bypass paths (H2).** Same gaps as the Python SDK. Runtime warning fires at `LlmDetector` init. Do not use in production until v0.6.2.
+
 ## [0.6.0] - 2026-04-16
 
 ### Added

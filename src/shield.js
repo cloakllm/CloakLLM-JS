@@ -110,7 +110,22 @@ class Shield {
    * @param {Object} [options.metadata] - Additional context
    * @returns {[string, TokenMap]}
    */
+  /**
+   * v0.6.1 H1.4: refuse oversized inputs to limit ReDoS exposure.
+   * @private
+   */
+  _checkInputLength(text) {
+    const cap = this.config.maxInputLength;
+    if (cap > 0 && text.length > cap) {
+      throw new Error(
+        `Input length ${text.length} exceeds maxInputLength=${cap}. ` +
+        `Set ShieldConfig({ maxInputLength: ... }) to raise the cap, or chunk the input.`
+      );
+    }
+  }
+
   sanitize(text, { tokenMap = null, model = null, provider = null, metadata = {} } = {}) {
+    this._checkInputLength(text);
     const startTime = performance.now();
 
     let t0 = performance.now();
@@ -258,6 +273,14 @@ class Shield {
    * @returns {[string[], TokenMap]}
    */
   sanitizeBatch(texts, { tokenMap = null, model = null, provider = null, metadata = {} } = {}) {
+    // v0.6.1 H1.4 — per-text length cap
+    for (let i = 0; i < texts.length; i++) {
+      try {
+        this._checkInputLength(texts[i]);
+      } catch (e) {
+        throw new Error(`texts[${i}]: ${e.message}`);
+      }
+    }
     const startTime = performance.now();
 
     if (!tokenMap) {
@@ -445,15 +468,33 @@ class Shield {
   /**
    * Analyze text for sensitive data without modifying it.
    *
-   * WARNING: By default, output contains raw PII in the 'text' field.
+   * WARNING (v0.6.x): By default, output contains raw PII in the 'text' field.
    * Set redactValues: true to replace with '[redacted]'.
+   *
+   * v0.7.0 will flip the default to true. To silence the deprecation warning,
+   * pass `redactValues` explicitly.
    *
    * @param {string} text
    * @param {Object} [options]
    * @param {boolean} [options.redactValues=false] - Replace PII text with '[redacted]'
    * @returns {Object}
    */
-  analyze(text, { redactValues = false } = {}) {
+  analyze(text, options) {
+    this._checkInputLength(text);
+    let redactValues;
+    if (!options || !('redactValues' in options)) {
+      // F4 deprecation: user did not pass an explicit value.
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[cloakllm] Shield.analyze() default for `redactValues` will change ' +
+        'from false to true in v0.7.0. The current default RETURNS RAW PII in ' +
+        'the response. Pass `redactValues: false` explicitly to keep current ' +
+        'behaviour, or `redactValues: true` to redact (recommended).'
+      );
+      redactValues = false;
+    } else {
+      redactValues = options.redactValues;
+    }
     const { detections } = this.detector.detect(text);
     return {
       entity_count: detections.length,
@@ -514,9 +555,11 @@ class Shield {
   verifyAudit(options = null) {
     let logDir = null;
     let outputFormat = null;
+    let legacyCanonical = false;
     if (options && typeof options === 'object') {
       logDir = options.logDir ?? null;
       outputFormat = options.outputFormat ?? null;
+      legacyCanonical = options.legacyCanonical === true;
     }
     let audit = this.audit;
     if (logDir) {
@@ -524,9 +567,9 @@ class Shield {
       audit = new AuditLogger(cfg);
     }
     if (outputFormat === 'compliance_report') {
-      return audit.verifyChain({ outputFormat: 'compliance_report' });
+      return audit.verifyChain({ outputFormat: 'compliance_report', legacyCanonical });
     }
-    return audit.verifyChain();
+    return audit.verifyChain({ legacyCanonical });
   }
 
   /** Get aggregate audit statistics. */

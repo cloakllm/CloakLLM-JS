@@ -17,19 +17,11 @@ const PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex'); // 
 
 // --- Canonical JSON (must match Python exactly) ---
 
-/**
- * Deterministic JSON: recursively sorted keys, compact separators, no floats.
- * @param {Object} data
- * @returns {string}
- */
-function canonicalJson(data) {
-  return JSON.stringify(data, (_, v) => {
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
-      return Object.keys(v).sort().reduce((o, k) => { o[k] = v[k]; return o; }, {});
-    }
-    return v;
-  });
-}
+// --- Canonical JSON ---
+// Delegated to ./_canonical for cross-SDK byte-equivalence (v0.6.1+).
+// Pre-v0.6.1 the local replacer-based version produced different bytes than
+// Python's `ensure_ascii=True` default; see `_canonical.js` for details.
+const { canonicalJson } = require('./_canonical');
 
 // --- DeploymentKeyPair ---
 

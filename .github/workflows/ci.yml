@@ -6,6 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+# v0.6.1 H7: least-privilege defaults + cancel-on-superseding-push.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -26,3 +34,8 @@ jobs:
 
       - name: Run tests
         run: node --test test/*.js
+
+      # v0.6.1 H6: scan installed deps for known vulns.
+      - name: npm audit
+        run: npm audit --audit-level=moderate
+        continue-on-error: true  # non-fatal until v0.7

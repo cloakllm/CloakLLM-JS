@@ -4,6 +4,15 @@ on:
   push:
     tags: ["v*"]
 
+# v0.6.1 H7: scoped permissions. id-token allows future OIDC migration.
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -17,7 +26,12 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
+      # TODO(v0.6.2): add `--provenance --access public` once we've verified
+      # the package is registered with sigstore. Provenance requires
+      # id-token: write (already granted above) but the first --provenance
+      # publish may need manual consent on the npm side.
       - name: Publish to npm
         run: npm publish
         env:
+          # NPM_TOKEN is a granular-access token with bypass-2FA enabled.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

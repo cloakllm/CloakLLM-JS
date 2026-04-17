@@ -102,6 +102,16 @@ class ShieldConfig {
     }
     // Note: KMS-based key providers are Python-only for v0.6. JS uses local Ed25519 keys.
 
+    // --- Input length cap (v0.6.1 H1.4) ---
+    // Hard cap on text length passed to detection backends. Prevents pathological
+    // inputs from exercising worst-case backtracking on built-in patterns.
+    // Default: 1 MB. Set to 0 to disable (not recommended).
+    this.maxInputLength = options.maxInputLength
+      ?? parseInt(process.env.CLOAKLLM_MAX_INPUT_LENGTH ?? '1000000', 10);
+    if (this.maxInputLength < 0) {
+      throw new Error(`maxInputLength must be >= 0 (got ${this.maxInputLength}).`);
+    }
+
     // --- Context Analysis ---
     this.contextAnalysis = options.contextAnalysis ??
       (process.env.CLOAKLLM_CONTEXT_ANALYSIS ?? 'false').toLowerCase() === 'true';

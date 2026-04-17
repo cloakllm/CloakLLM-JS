@@ -127,6 +127,18 @@ class LlmDetector {
    */
   constructor(config) {
     this._model = config.llmModel;
+    // F2.1 (v0.6.1): SSRF hardening lands in v0.6.2. Until then, warn whenever
+    // llmAllowRemote: true is set — the validator currently has known bypass
+    // paths (DNS rebinding, integer/octal IPv4, IPv4-mapped IPv6 metadata IPs).
+    if (config && config.llmAllowRemote === true) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[cloakllm] llmAllowRemote: true has known SSRF bypass paths in ' +
+        'v0.6.x (DNS rebinding, integer/octal IPv4, IPv4-mapped IPv6 metadata ' +
+        'addresses). Do NOT use in production until the v0.6.2 SSRF hardening ' +
+        'lands. Tracking: https://github.com/cloakllm/CloakLLM-JS/issues/ssrf-hardening'
+      );
+    }
     this._baseUrl = _validateOllamaUrl(
       config.llmOllamaUrl.replace(/\/+$/, ''),
       config.llmAllowRemote ?? false,
