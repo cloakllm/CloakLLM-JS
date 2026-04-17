@@ -5,6 +5,17 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-04-17
+
+### Added (hotfix release for v0.6.1 audit findings)
+
+- **I2 — `test/test_audit_schema.js`.** The v0.6.1 plan committed to a JS mirror of the Python audit schema test (B3.5) but the JS file was never written. The `_validateAuditEntrySchema` function in `audit.js` is correct but had zero dedicated test coverage; this release adds the missing tests covering the 9-key allow-list, the legacy denylist, metadata length/depth bounds, and the always-on enforcement.
+
+### Notes
+
+- This is a **patch release**, not the second-tier security cleanup (deferred to v0.6.3).
+- Version bumped to `0.6.2` (not `0.6.1.1`) because npm semver does not support 4-digit versions and we maintain version parity across all SDKs.
+
 ## [0.6.1] - 2026-04-16
 
 ### Security (blocker fixes from internal audit)
