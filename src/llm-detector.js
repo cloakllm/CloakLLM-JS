@@ -140,13 +140,15 @@ function _isAlwaysDenyIpv4(ip) {
   if (Number.isNaN(n)) return false;
   // Always-deny ranges (mirror Python ALWAYS_DENY_NETWORKS):
   //   0.0.0.0/8        0x00000000 .. 0x00ffffff   "this network", aliases to localhost on Linux
-  //   100.64.0.0/10    0x64400000 .. 0x647fffff   carrier-grade NAT (cloud metadata)
+  //   100.64.0.0/10    0x64400000 .. 0x647fffff   CGN (covers Alibaba 100.100.100.200)
   //   169.254.0.0/16   0xa9fe0000 .. 0xa9feffff   link-local + AWS/GCP/Azure IMDS
+  //   192.0.0.0/24     0xc0000000 .. 0xc00000ff   IETF protocol assignments (covers Oracle Cloud IMDS at 192.0.0.192)
   //   224.0.0.0/4      0xe0000000 .. 0xefffffff   multicast
   //   240.0.0.0/4      0xf0000000 .. 0xffffffff   reserved
   if (n <= 0x00ffffff) return true;
   if (n >= 0x64400000 && n <= 0x647fffff) return true;
   if (n >= 0xa9fe0000 && n <= 0xa9feffff) return true;
+  if (n >= 0xc0000000 && n <= 0xc00000ff) return true;
   if (n >= 0xe0000000) return true;  // covers 224.0.0.0/4 + 240.0.0.0/4 (everything from 224 up)
   return false;
 }
@@ -183,7 +185,20 @@ function _isPrivateIpv6(ip) {
   return false;
 }
 
-/** v0.6.3 H2: Always-deny IPv6 ranges (multicast, unspecified). */
+/**
+ * v0.6.3 H2: Always-deny IPv6 ranges (multicast, unspecified).
+ *
+ * KNOWN GAP: AWS uses `fd00:ec2::254` for IPv6 IMDS, which lives inside the
+ * `fc00::/7` ULA range that `_isPrivateIpv6` permits. The Python SDK closes
+ * this with `ipaddress.ip_network("fd00:ec2::/64")`. JS would need an IPv6
+ * normalizer to handle the multiple textual forms (`fd00:ec2::254`,
+ * `fd00:0ec2::254`, `fd00:ec2:0:0:0:0:0:254`, etc.) — punted to v0.7.0.
+ *
+ * Practical exposure: an attacker would need to either (a) trick the operator
+ * into pasting a literal `[fd00:ec2::254]` into config, or (b) control the
+ * DNS for a hostname the operator configured. Both are operator-trust failures
+ * — same residual gap class as hostname rebinding.
+ */
 function _isAlwaysDenyIpv6(ip) {
   if (typeof ip !== 'string') return false;
   const lower = ip.replace(/^\[|\]$/g, '').toLowerCase();

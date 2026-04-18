@@ -33,6 +33,13 @@ describe('_unwrapIpv4MappedIpv6 (v0.6.3 H2)', () => {
     assert.equal(_unwrapIpv4MappedIpv6('::ffff:a9fe:a9fe'), '169.254.169.254');
   });
 
+  it('unwraps hex form (uppercase) to IPv4', () => {
+    // Case-insensitivity matters because URL parsers can preserve uppercase
+    // IPv6 from `[::FFFF:A9FE:A9FE]` literals.
+    assert.equal(_unwrapIpv4MappedIpv6('::FFFF:A9FE:A9FE'), '169.254.169.254');
+    assert.equal(_unwrapIpv4MappedIpv6('[::FFFF:A9FE:A9FE]'), '169.254.169.254');
+  });
+
   it('returns null for non-IPv4-mapped IPv6', () => {
     assert.equal(_unwrapIpv4MappedIpv6('::1'), null);
     assert.equal(_unwrapIpv4MappedIpv6('fd00::1'), null);
@@ -62,8 +69,18 @@ describe('IPv4 range predicates (v0.6.3 H2)', () => {
   it('100.64.0.0/10 (CGN) is always-deny', () => {
     assert.equal(_isAlwaysDenyIpv4('100.64.0.1'), true);
     assert.equal(_isAlwaysDenyIpv4('100.127.255.254'), true);
+    assert.equal(_isAlwaysDenyIpv4('100.100.100.200'), true);  // Alibaba IMDS
     // Boundary: 100.63.x.x is NOT in /10
     assert.equal(_isAlwaysDenyIpv4('100.63.0.1'), false);
+  });
+
+  it('192.0.0.0/24 (IETF / Oracle Cloud IMDS) is always-deny', () => {
+    assert.equal(_isAlwaysDenyIpv4('192.0.0.192'), true);  // Oracle IMDS
+    assert.equal(_isAlwaysDenyIpv4('192.0.0.0'), true);
+    assert.equal(_isAlwaysDenyIpv4('192.0.0.255'), true);
+    // Boundary: adjacent /24s outside the IETF range
+    assert.equal(_isAlwaysDenyIpv4('192.0.1.1'), false);
+    assert.equal(_isAlwaysDenyIpv4('191.255.255.255'), false);
   });
 
   it('0.0.0.0/8 is always-deny', () => {
