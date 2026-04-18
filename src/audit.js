@@ -168,6 +168,46 @@ class AuditLogger {
     this._prevHash = GENESIS_HASH;
     this._logDir = config.logDir;
     this._initialized = false;
+    // v0.6.3 H4: When true, the next write prepends `\n`. Set during init
+    // recovery if the target log file exists and ends mid-line (partial
+    // crash write). Without this, the new entry concatenates onto the
+    // truncation and is itself unparseable.
+    this._needsLeadingNewline = false;
+  }
+
+  /**
+   * v0.6.3 H4: Scan backward through log files looking for the last
+   * well-formed entry (with both `seq` and `entry_hash`). Skips corrupt
+   * trailing lines instead of treating them as evidence the whole file
+   * is unusable — that previously stranded earlier valid entries when
+   * a write was partial at crash time.
+   *
+   * @param {string[]} logFiles
+   * @returns {object|null}
+   */
+  _scanForLastValidEntry(logFiles) {
+    for (let fi = logFiles.length - 1; fi >= 0; fi--) {
+      let content;
+      try {
+        content = fs.readFileSync(logFiles[fi], 'utf-8');
+      } catch {
+        continue;
+      }
+      const lines = content.split('\n').filter(l => l.trim());
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const entry = JSON.parse(lines[i]);
+          if (entry && typeof entry === 'object'
+              && 'seq' in entry && 'entry_hash' in entry) {
+            return entry;
+          }
+        } catch {
+          // corrupt line — keep scanning backward in this file
+        }
+      }
+      // file had no valid entries — try next-older
+    }
+    return null;
   }
 
   _ensureInit() {
@@ -175,22 +215,49 @@ class AuditLogger {
 
     fs.mkdirSync(this._logDir, { recursive: true });
 
-    // Recover chain state from most recent log file
+    // v0.6.3 H4: backward scan across all files (was: read trailing line of
+    // most-recent file only and silently start fresh if it failed to parse).
     const logFiles = this._getLogFiles();
-    if (logFiles.length > 0) {
-      const lastFile = logFiles[logFiles.length - 1];
-      try {
-        const content = fs.readFileSync(lastFile, 'utf-8');
-        const lines = content.split('\n').filter(l => l.trim());
-        if (lines.length > 0) {
-          const lastEntry = JSON.parse(lines[lines.length - 1]);
-          this._seq = lastEntry.seq + 1;
-          this._prevHash = lastEntry.entry_hash;
+    // v0.6.3 H4: detect partial-write tail on today's file. If it exists and
+    // doesn't end with `\n`, the next write prepends one to avoid concat-on-truncation.
+    const todayFile = this._getLogFile();
+    try {
+      if (fs.existsSync(todayFile)) {
+        const stat = fs.statSync(todayFile);
+        if (stat.size > 0) {
+          const fd = fs.openSync(todayFile, 'r');
+          try {
+            const buf = Buffer.alloc(1);
+            fs.readSync(fd, buf, 0, 1, stat.size - 1);
+            if (buf[0] !== 0x0a) {  // not '\n'
+              this._needsLeadingNewline = true;
+            }
+          } finally {
+            fs.closeSync(fd);
+          }
         }
-      } catch {
-        // Start fresh if corrupted
       }
+    } catch {
+      // best-effort — if we can't probe, fall through; next write may concat.
     }
+    const lastEntry = this._scanForLastValidEntry(logFiles);
+    if (lastEntry !== null) {
+      this._seq = lastEntry.seq + 1;
+      this._prevHash = lastEntry.entry_hash;
+    } else if (logFiles.length > 0 && this.config.auditStrictChain) {
+      // v0.6.3 H4: refuse silent GENESIS restart when files exist but
+      // recovery returned nothing — that surface lets an attacker mask
+      // tampering as a normal restart.
+      throw new Error(
+        `CloakLLM audit chain recovery failed: log dir '${this._logDir}' ` +
+        `contains ${logFiles.length} file(s) but none have a recoverable ` +
+        `trailing entry. Refusing to silently restart from GENESIS ` +
+        `(auditStrictChain=true). Inspect the files for corruption — a ` +
+        `silent restart would let an attacker mask tampering as a restart.`
+      );
+    }
+    // else: log dir empty OR all files empty AND strict mode off → start
+    // from GENESIS (back-compat default).
 
     this._initialized = true;
   }
@@ -300,7 +367,14 @@ class AuditLogger {
     // NOTE: appendFileSync is atomic on POSIX for writes < PIPE_BUF (4096 bytes).
     // For multi-process deployments, use external coordination.
     // This module assumes single-process, single-writer access.
-    fs.appendFileSync(logFile, JSON.stringify(entryData) + '\n');
+    let payload = JSON.stringify(entryData) + '\n';
+    // v0.6.3 H4: prepend `\n` if recovery detected the target file ends
+    // mid-line (partial-write tail from a prior crash). One-shot flag.
+    if (this._needsLeadingNewline) {
+      payload = '\n' + payload;
+      this._needsLeadingNewline = false;
+    }
+    fs.appendFileSync(logFile, payload);
 
     // Update chain state
     this._prevHash = entryHash;

@@ -77,6 +77,13 @@ class ShieldConfig {
     // --- Audit Logging ---
     this.auditEnabled = options.auditEnabled ?? true;
     this.logDir = options.logDir ?? process.env.CLOAKLLM_LOG_DIR ?? './cloakllm_audit';
+    // v0.6.3 H4: when true, refuse to silently restart the audit chain from
+    // GENESIS if the log dir contains files but recovery couldn't find any
+    // well-formed entry. Defaults to false for backward-compat. Set true (or
+    // env CLOAKLLM_AUDIT_STRICT_CHAIN=true) for compliance-grade deployments
+    // where a silent chain restart could mask tampering.
+    this.auditStrictChain = options.auditStrictChain
+      ?? (process.env.CLOAKLLM_AUDIT_STRICT_CHAIN ?? '').toLowerCase() === 'true';
 
     // --- Attestation (Ed25519 signing) ---
     /** @type {import('./attestation').DeploymentKeyPair|null} Pre-loaded keypair */
