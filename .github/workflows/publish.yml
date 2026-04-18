@@ -30,16 +30,17 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # v0.6.3 I6.1: npm trusted publishing requires npm CLI ≥ 11.5.1.
+          # Node 22 LTS ships with npm 10. We tried `npm install -g npm@latest`
+          # to upgrade in-place — that crashes (`Cannot find module
+          # 'promise-retry'`) because npm 10's running process loses module
+          # resolution mid-overwrite when its own files are replaced with
+          # npm 11's incompatible internals. Cleanest fix: pin to Node 24,
+          # which ships with npm 11.5+. This affects ONLY the publish job
+          # toolchain — the package's own `engines.node: ">=18"` constraint
+          # is unchanged, and the tarball produced is identical.
+          node-version: 24
           registry-url: https://registry.npmjs.org
-
-      # v0.6.3 I6.1: npm trusted publishing requires npm CLI ≥ 11.5.1.
-      # Node 22 LTS ships with npm 10, so we upgrade explicitly. This is
-      # safer than bumping the Node major in a security release — pins the
-      # npm version requirement at the npm level rather than dragging a
-      # Node toolchain change into v0.6.3.
-      - name: Upgrade npm to a trusted-publishing-capable version
-        run: npm install -g npm@latest
 
       # v0.6.3 I6.1: OIDC trusted publishing replaces the long-lived NPM_TOKEN.
       # Provenance attestations are AUTOMATIC under trusted publishing — no
