@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           # v0.6.3 I6.1: npm trusted publishing requires npm CLI ≥ 11.5.1.
           # Node 22 LTS ships with npm 10. We tried `npm install -g npm@latest`
