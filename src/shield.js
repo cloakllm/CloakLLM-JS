@@ -228,20 +228,39 @@ class Shield {
   desanitize(text, tokenMap, { model = null, provider = null, metadata = {} } = {}) {
     const startTime = performance.now();
 
+    // v0.6.3 H3: Pre-compute which tokens actually appear in `text`. Logged
+    // (instead of the full map) to close the desanitize-time disclosure
+    // oracle — see Python shield.py for the full rationale. Mirrors
+    // cloakllm-py exactly so audit-log readers see the same shape across SDKs.
+    const presentTokens = [...tokenMap.reverse.keys()]
+      .filter(t => text.includes(t))
+      .sort();
+
     const t0 = performance.now();
     const result = this.tokenizer.detokenize(text, tokenMap);
     const tokenizationMs = performance.now() - t0;
 
     const elapsedMs = performance.now() - startTime;
 
+    // v0.6.3 H3: Bucket timing in audit log to 10ms granularity. Microsecond
+    // precision lets an audit-log reader correlate "which tokens hit" with
+    // timing variance — a side-channel for token presence. Full-precision
+    // values still flow into .metrics() for performance debugging.
+    const _bucketMs = (ms) => Math.round(ms / 10) * 10;
+
     const timing = {
-      total_ms: +elapsedMs.toFixed(2),
-      tokenization_ms: +tokenizationMs.toFixed(2),
+      total_ms: _bucketMs(elapsedMs),
+      tokenization_ms: _bucketMs(tokenizationMs),
     };
 
     this._metrics.calls.desanitize++;
     this._metrics.total_ms += elapsedMs;
     this._metrics.tokenization_ms += tokenizationMs;
+
+    // v0.6.3 H3: filter entity_details to the present subset.
+    const presentTokenSet = new Set(presentTokens);
+    const presentEntityDetails = (tokenMap.entityDetails || [])
+      .filter(ed => presentTokenSet.has(ed.token));
 
     this.audit.log({
       eventType: 'desanitize',
@@ -249,12 +268,12 @@ class Shield {
       sanitizedText: result,
       model,
       provider,
-      entityCount: tokenMap.entityCount,
+      entityCount: presentTokens.length,  // H3: present-only, not full map
       categories: tokenMap.categories,
-      tokensUsed: [...tokenMap.reverse.keys()],
-      latencyMs: elapsedMs,
+      tokensUsed: presentTokens,  // H3
+      latencyMs: _bucketMs(elapsedMs),  // H3: bucketed
       mode: this.config.mode,
-      entityDetails: tokenMap.entityDetails,
+      entityDetails: presentEntityDetails,  // H3
       timing,
       metadata,
     });
@@ -431,20 +450,33 @@ class Shield {
   desanitizeBatch(texts, tokenMap, { model = null, provider = null, metadata = {} } = {}) {
     const startTime = performance.now();
 
+    // v0.6.3 H3: union of tokens present across the batch (mirrors Python).
+    const allText = texts.join('\n');
+    const presentTokens = [...tokenMap.reverse.keys()]
+      .filter(t => allText.includes(t))
+      .sort();
+
     const t0 = performance.now();
     const results = texts.map(text => this.tokenizer.detokenize(text, tokenMap));
     const tokenizationMs = performance.now() - t0;
 
     const elapsedMs = performance.now() - startTime;
 
+    // v0.6.3 H3: bucket timing in audit log; full precision in .metrics().
+    const _bucketMs = (ms) => Math.round(ms / 10) * 10;
+
     const timing = {
-      total_ms: +elapsedMs.toFixed(2),
-      tokenization_ms: +tokenizationMs.toFixed(2),
+      total_ms: _bucketMs(elapsedMs),
+      tokenization_ms: _bucketMs(tokenizationMs),
     };
 
     this._metrics.calls.desanitizeBatch++;
     this._metrics.total_ms += elapsedMs;
     this._metrics.tokenization_ms += tokenizationMs;
+
+    const presentTokenSet = new Set(presentTokens);
+    const presentEntityDetails = (tokenMap.entityDetails || [])
+      .filter(ed => presentTokenSet.has(ed.token));
 
     this.audit.log({
       eventType: 'desanitize_batch',
@@ -452,12 +484,12 @@ class Shield {
       sanitizedText: '',
       model,
       provider,
-      entityCount: tokenMap.entityCount,
+      entityCount: presentTokens.length,  // H3
       categories: tokenMap.categories,
-      tokensUsed: [...tokenMap.reverse.keys()],
-      latencyMs: elapsedMs,
+      tokensUsed: presentTokens,  // H3
+      latencyMs: _bucketMs(elapsedMs),  // H3
       mode: this.config.mode,
-      entityDetails: tokenMap.entityDetails,
+      entityDetails: presentEntityDetails,  // H3
       timing,
       metadata,
     });
