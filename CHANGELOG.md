@@ -43,6 +43,7 @@ versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Known issues
 
 - **`llmAllowRemote: true` SSRF bypass paths (H2).** Same gaps as the Python SDK. Runtime warning fires at `LlmDetector` init. Do not use in production until v0.6.2.
+- **Cross-SDK verification of v0.6.0 legacy chains containing non-ASCII data.** JS v0.6.0 preserved UTF-8 in canonical JSON while Python v0.6.0 escaped non-ASCII as `\uXXXX`. Audit chains written by JS v0.6.0 containing non-ASCII data cannot be verified by the Python SDK with `legacy_canonical=True`, and vice versa. Re-write the chain by replaying through v0.6.1+ to get fully cross-SDK verifiable entries. ASCII-only legacy chains verify correctly across both SDKs. See `CloakLLM/COMPLIANCE.md` § Cross-Language Compatibility.
 
 ## [0.6.0] - 2026-04-16
 
