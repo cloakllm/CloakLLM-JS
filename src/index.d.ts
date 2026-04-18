@@ -273,11 +273,20 @@ export class Tokenizer {
 }
 
 export class StreamDesanitizer {
-  constructor(tokenMap: TokenMap);
+  /**
+   * @param tokenMap TokenMap with forward/reverse mappings.
+   * @param options.maxInputLength v0.6.3 (NEW-3.e): hard cap on cumulative
+   *   characters fed via `feed()`. Default 0 = no cap. Throws if exceeded.
+   */
+  constructor(tokenMap: TokenMap, options?: { maxInputLength?: number });
   /** Feed a chunk of text; returns text safe to emit (may be empty if buffering). */
   feed(chunk: string): string;
   /** Flush any remaining buffered text at end of stream. */
   flush(): string;
+  /** Cumulative characters fed via feed() (v0.6.3 NEW-3.e/P2-1). */
+  charsProcessed: number;
+  /** @deprecated v0.6.3: use `charsProcessed`. Removed in v0.7.0. */
+  readonly bytesProcessed: number;
 }
 
 export class AuditLogger {

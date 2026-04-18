@@ -17,14 +17,38 @@ class StreamDesanitizer {
     /**
      * Create a new StreamDesanitizer.
      * @param {import('./tokenizer').TokenMap} tokenMap
+     * @param {Object} [options]
+     * @param {number} [options.maxInputLength=0] - v0.6.3 (NEW-3.e): hard cap
+     *   on cumulative bytes fed via `feed()`. Default 0 = no cap (back-compat).
+     *   When > 0, throws Error if cumulative bytes exceed the cap. Mirrors
+     *   `Shield.maxInputLength` for streams.
      */
-    constructor(tokenMap) {
+    constructor(tokenMap, { maxInputLength = 0 } = {}) {
         this._buffer = '';
         /** @type {Map<string, string>} lowercase token -> original value */
         this._reverseCI = new Map();
         for (const [token, original] of tokenMap.reverse) {
             this._reverseCI.set(token.toLowerCase(), original);
         }
+        // v0.6.3 NEW-3.e + P2-1: track cumulative chunk CHARS (not bytes —
+        // String.length is UTF-16 code units, not byte count). Middleware
+        // reads this for the audit entry's `chars_processed` field.
+        this.charsProcessed = 0;
+        this._maxInputLength = Math.max(0, Number(maxInputLength) || 0);
+    }
+
+    /**
+     * @deprecated v0.6.3: use `charsProcessed`. Same value, accurate name.
+     * Removed in v0.7.0.
+     */
+    get bytesProcessed() {
+        // eslint-disable-next-line no-console
+        console.warn(
+            '[CloakLLM] StreamDesanitizer.bytesProcessed is deprecated since v0.6.3 — ' +
+            'the field counts characters not bytes. Use `charsProcessed` instead. ' +
+            'This alias will be removed in v0.7.0.'
+        );
+        return this.charsProcessed;
     }
 
     _unescape(text) {
@@ -41,6 +65,19 @@ class StreamDesanitizer {
      * @returns {string}
      */
     feed(chunk) {
+        // v0.6.3 NEW-3.e: enforce per-stream length cap to prevent
+        // unbounded-stream memory exhaustion attacks.
+        const chunkLen = chunk ? chunk.length : 0;
+        const newTotal = this.charsProcessed + chunkLen;
+        if (this._maxInputLength > 0 && newTotal > this._maxInputLength) {
+            throw new Error(
+                `StreamDesanitizer: cumulative chars ${newTotal} exceeds ` +
+                `maxInputLength=${this._maxInputLength}. Set ` +
+                `ShieldConfig({ maxInputLength: 0 }) to disable, or raise the cap.`
+            );
+        }
+        this.charsProcessed = newTotal;
+
         const parts = [];
         this._buffer += chunk;
 

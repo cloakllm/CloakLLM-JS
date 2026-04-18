@@ -43,6 +43,156 @@ const _originalFunctions = new WeakMap();
 /** @type {WeakSet<Object>} */
 const _patchedClients = new WeakSet();
 
+// v0.6.3 P0-4: warn once per process about audit failures (don't spam logs).
+let _auditFailureWarnedOnce = false;
+
+function _safeErrorTypeName(err) {
+  // v0.6.3 P1-2: defensive extraction. Handles `throw "string"`, `throw 42`,
+  // `throw null`, `throw undefined`. Without this guard, `err.constructor.name`
+  // throws TypeError on null/undefined, which the outer audit catch swallows
+  // — silently dropping the audit entry (NEW-3 regression).
+  if (err === null) return 'null';
+  if (err === undefined) return 'undefined';
+  try {
+    if (err && err.constructor && typeof err.constructor.name === 'string') {
+      return err.constructor.name;
+    }
+  } catch (_) { /* ignore */ }
+  return typeof err;
+}
+
+function _streamAuditLog(tokenMap, model, desan, startMs, streamError, shieldLocal) {
+  // v0.6.3 NEW-3 / P0-2 / P0-4: write one desanitize_stream entry per stream
+  // lifecycle. shieldLocal captured at wrapper start so disable()-mid-stream
+  // can't cause silent gaps. Audit failure logged once via console.warn
+  // (operator visibility) but never re-raised (must not break the user stream).
+  if (!shieldLocal || !shieldLocal.audit) return;
+  const elapsedMs = Date.now() - startMs;
+  // P2-1: rename bytes_processed -> chars_processed (the field counts JS
+  // string .length / UTF-16 code units, not bytes — name was misleading).
+  const metadata = { chars_processed: Math.trunc(desan && desan.charsProcessed) || 0 };
+  if (streamError) {
+    metadata.stream_error = true;
+    metadata.error_type = _safeErrorTypeName(streamError);
+  }
+  try {
+    shieldLocal.audit.log({
+      eventType: 'desanitize_stream',
+      entityCount: tokenMap ? tokenMap.entityCount : 0,
+      categories: tokenMap ? { ...tokenMap.categories } : {},
+      tokensUsed: tokenMap ? Array.from(tokenMap.reverse.keys()) : [],
+      latencyMs: elapsedMs,
+      mode: tokenMap ? tokenMap.mode : null,
+      entityDetails: tokenMap ? tokenMap.entityDetails : [],
+      model: model,
+      metadata: metadata,
+    });
+  } catch (e) {
+    if (!_auditFailureWarnedOnce) {
+      _auditFailureWarnedOnce = true;
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[CloakLLM] audit log write failed in stream wrapper: ' +
+        _safeErrorTypeName(e) +
+        '. All subsequent failures of this kind will be silenced. ' +
+        'Investigate disk space, permissions, or audit chain integrity.'
+      );
+    }
+  }
+}
+
+// v0.6.3 P0-2: extracted from inside enable() so it can be a clean module-level
+// function. Takes pre-popped tokenMap + pre-captured shieldLocal — no module
+// globals consulted during stream lifecycle.
+async function* _incrementalDesanitize(stream, model, tokenMap, shieldLocal) {
+  // v0.6.3 P2-3: even when no PII, write a desanitize_stream entry — strict
+  // Article 12 "every interaction logged".
+  if (!tokenMap || tokenMap.entityCount === 0) {
+    const startMs = Date.now();
+    let streamError = null;
+    try {
+      yield* stream;
+    } catch (err) {
+      streamError = err;
+      throw err;
+    } finally {
+      _streamAuditLog(tokenMap, model, { charsProcessed: 0 }, startMs, streamError, shieldLocal);
+    }
+    return;
+  }
+
+  // v0.6.3 NEW-3.e: per-stream input cap
+  const maxIn = (shieldLocal && shieldLocal.config && shieldLocal.config.maxInputLength) || 0;
+  const desan = new StreamDesanitizer(tokenMap, { maxInputLength: maxIn });
+  const startMs = Date.now();
+  let streamError = null;
+
+  try {
+    try {
+      for await (const chunk of stream) {
+        const delta = chunk.choices?.[0]?.delta;
+        const finishReason = chunk.choices?.[0]?.finish_reason;
+        let yielded = false;
+
+        if (delta?.content) {
+          const output = desan.feed(delta.content);
+          if (output) {
+            // v0.6.3 P1-1: preserve finish_reason on the desanitized chunk.
+            yield {
+              ...chunk,
+              choices: [{
+                ...chunk.choices[0],
+                delta: { ...chunk.choices[0].delta, content: output },
+              }],
+            };
+            yielded = true;
+          } else if (finishReason) {
+            // v0.6.3 P1-1: content was buffered (mid-token boundary) AND
+            // chunk has finish_reason. Without this branch, finish_reason
+            // never reaches the consumer — they may hang waiting for stop.
+            // Emit a finish-only chunk preserving finish_reason; flush below.
+            yield {
+              ...chunk,
+              choices: [{ ...chunk.choices[0], delta: {} }],
+            };
+            yielded = true;
+          }
+        } else {
+          yield chunk;
+          yielded = true;
+        }
+
+        if (finishReason) {
+          const flushed = desan.flush();
+          if (flushed) {
+            yield {
+              ...chunk,
+              choices: [{
+                ...chunk.choices[0],
+                delta: { content: flushed },
+                finish_reason: null,
+              }],
+            };
+          }
+          if (yielded) return;  // P1-1: terminate after finish; mirrors Python
+        }
+      }
+
+      // Stream ended without finish_reason — flush remainder
+      const flushed = desan.flush();
+      if (flushed) {
+        yield { choices: [{ delta: { content: flushed } }] };
+      }
+    } catch (err) {
+      streamError = err;
+      desan.flush();
+      throw err;
+    }
+  } finally {
+    _streamAuditLog(tokenMap, model, desan, startMs, streamError, shieldLocal);
+  }
+}
+
 /**
  * Sanitize messages array, inject system prompt hint.
  * @param {Array<Object>} messages
@@ -183,66 +333,17 @@ function enable(client, config = null) {
       if (params.stream) {
         if (!callKey || _shouldSkip(model)) return response;
 
-        const streamCallKey = callKey;
-        callKey = ''; // let the generator own cleanup
-
-        async function* incrementalDesanitize(stream) {
-          const streamEntry = _activeMaps.get(streamCallKey);
-          _activeMaps.delete(streamCallKey);
-          const tokenMap = streamEntry?.tokenMap;
-
-          if (!tokenMap || tokenMap.entityCount === 0) {
-            yield* stream;
-            return;
-          }
-
-          const desan = new StreamDesanitizer(tokenMap);
-
-          try {
-            for await (const chunk of stream) {
-              const delta = chunk.choices?.[0]?.delta;
-              if (delta?.content) {
-                const output = desan.feed(delta.content);
-                if (output) {
-                  yield {
-                    ...chunk,
-                    choices: [{
-                      ...chunk.choices[0],
-                      delta: { ...chunk.choices[0].delta, content: output },
-                    }],
-                  };
-                }
-              } else {
-                yield chunk;
-              }
-
-              if (chunk.choices?.[0]?.finish_reason) {
-                const flushed = desan.flush();
-                if (flushed) {
-                  yield {
-                    ...chunk,
-                    choices: [{
-                      ...chunk.choices[0],
-                      delta: { content: flushed },
-                      finish_reason: null,
-                    }],
-                  };
-                }
-              }
-            }
-
-            // Stream ended without finish_reason — flush remainder
-            const flushed = desan.flush();
-            if (flushed) {
-              yield { choices: [{ delta: { content: flushed } }] };
-            }
-          } catch (err) {
-            desan.flush();
-            throw err;
-          }
-        }
-
-        return incrementalDesanitize(response);
+        // v0.6.3 P0-2: pop token_map AND capture _shield reference SYNCHRONOUSLY
+        // before returning the lazy stream wrapper. Otherwise a concurrent
+        // disable() between this point and the consumer's first iteration
+        // would clear _activeMaps AND null _shield — re-opening the Article 12
+        // gap NEW-3 was supposed to close.
+        const streamEntry = _activeMaps.get(callKey);
+        _activeMaps.delete(callKey);
+        const streamTokenMap = streamEntry?.tokenMap;
+        const streamShield = _shield;  // capture before potential disable()
+        callKey = ''; // consumed
+        return _incrementalDesanitize(response, model, streamTokenMap, streamShield);
       }
 
       // Desanitize non-streaming response (all choices share the same token map)

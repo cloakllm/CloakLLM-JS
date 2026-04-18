@@ -35,7 +35,7 @@ jobs:
       - name: Run tests
         run: node --test test/*.js
 
-      # v0.6.1 H6: scan installed deps for known vulns.
+      # v0.6.3 NEW-9: dep CVE audit is now BLOCKING (was continue-on-error).
+      # If a CVE without an upstream fix appears, document the exception inline.
       - name: npm audit
         run: npm audit --audit-level=moderate
-        continue-on-error: true  # non-fatal until v0.7
