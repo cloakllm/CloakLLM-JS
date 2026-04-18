@@ -56,5 +56,22 @@ jobs:
       #   Environment: npm
       # See: https://docs.npmjs.com/trusted-publishers/
       # After first successful OIDC publish, delete the NPM_TOKEN secret.
+      #
+      # Idempotency wrapper: npm doesn't have PyPI's `skip-existing: true`, so
+      # a duplicate-version publish is a hard failure. We treat "previously
+      # published versions" as a no-op success — same semantics as PyPI's
+      # skip-existing, useful for re-tagged rc builds and for safe re-runs.
       - name: Publish to npm (OIDC + auto-provenance)
-        run: npm publish --access public
+        shell: bash
+        run: |
+          set -o pipefail
+          if npm publish --access public 2>&1 | tee /tmp/publish.log; then
+            echo "::notice::Published successfully via OIDC trusted publishing"
+            exit 0
+          fi
+          if grep -q "previously published versions" /tmp/publish.log; then
+            echo "::notice::Version already on npm — OIDC auth + provenance verified, treating as no-op (skip-existing semantics)"
+            exit 0
+          fi
+          echo "::error::npm publish failed with an error other than duplicate version"
+          exit 1
