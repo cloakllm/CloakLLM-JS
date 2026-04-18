@@ -80,6 +80,158 @@ class BoundedCache {
   }
 }
 
+// v0.6.3 H2: SSRF hardening — IP-literal protections.
+//
+// The JS constructor stays synchronous (no breaking API change), so the
+// hostname-rebinding mitigation that the Python SDK does at fetch time via
+// re-resolution doesn't apply here — Node has no synchronous DNS. The
+// realistic attack we DO close is an operator pasting a literal cloud
+// metadata IP (or its IPv4-mapped IPv6 form) into config. Hostname-based
+// rebinding (where the user's DNS server flips an answer between validation
+// and curl spawn) is documented as a residual gap; if you set
+// `llmAllowRemote: true`, point it at a hostname YOU control.
+
+/**
+ * v0.6.3 H2: Unwrap an IPv4-mapped IPv6 address (`::ffff:x.y.z.w`) to its
+ * IPv4 form so range checks against IPv4 deny lists still apply. Returns
+ * `null` if the input isn't an IPv4-mapped IPv6.
+ */
+function _unwrapIpv4MappedIpv6(ip) {
+  if (typeof ip !== 'string') return null;
+  // Normalize: lowercase, strip brackets if any
+  const lower = ip.replace(/^\[|\]$/g, '').toLowerCase();
+  // Match ::ffff:x.y.z.w
+  const dotted = lower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (dotted) return dotted[1];
+  // Match ::ffff:hhhh:hhhh (hex form)
+  const hex = lower.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hex) {
+    const high = parseInt(hex[1], 16);
+    const low = parseInt(hex[2], 16);
+    return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
+  }
+  return null;
+}
+
+/** v0.6.3 H2: Decimal IPv4 → integer (returns NaN on bad input). */
+function _ipv4ToInt(ip) {
+  const parts = ip.split('.');
+  if (parts.length !== 4) return NaN;
+  let n = 0;
+  for (const p of parts) {
+    const v = Number(p);
+    if (!Number.isInteger(v) || v < 0 || v > 255) return NaN;
+    n = n * 256 + v;
+  }
+  return n;
+}
+
+/**
+ * v0.6.3 H2: True if the given IPv4 address falls in any of the always-deny
+ * ranges (cloud metadata, multicast, etc.) regardless of allowRemote.
+ *
+ * NB: uses numeric range comparison rather than bitwise AND because JS
+ * bitwise operators coerce to signed 32-bit, and any address > 2^31 comes
+ * out negative — `(n & 0xffff0000) === 0xa9fe0000` evaluates to false even
+ * when the bits match.
+ */
+function _isAlwaysDenyIpv4(ip) {
+  const n = _ipv4ToInt(ip);
+  if (Number.isNaN(n)) return false;
+  // Always-deny ranges (mirror Python ALWAYS_DENY_NETWORKS):
+  //   0.0.0.0/8        0x00000000 .. 0x00ffffff   "this network", aliases to localhost on Linux
+  //   100.64.0.0/10    0x64400000 .. 0x647fffff   carrier-grade NAT (cloud metadata)
+  //   169.254.0.0/16   0xa9fe0000 .. 0xa9feffff   link-local + AWS/GCP/Azure IMDS
+  //   224.0.0.0/4      0xe0000000 .. 0xefffffff   multicast
+  //   240.0.0.0/4      0xf0000000 .. 0xffffffff   reserved
+  if (n <= 0x00ffffff) return true;
+  if (n >= 0x64400000 && n <= 0x647fffff) return true;
+  if (n >= 0xa9fe0000 && n <= 0xa9feffff) return true;
+  if (n >= 0xe0000000) return true;  // covers 224.0.0.0/4 + 240.0.0.0/4 (everything from 224 up)
+  return false;
+}
+
+/**
+ * v0.6.3 H2: True if the given IPv4 address is in a permitted private range
+ * (loopback, RFC1918). Accepted regardless of allowRemote.
+ *
+ * Same numeric-range approach as _isAlwaysDenyIpv4 to dodge the JS signed
+ * bitwise trap.
+ */
+function _isPrivateIpv4(ip) {
+  const n = _ipv4ToInt(ip);
+  if (Number.isNaN(n)) return false;
+  //   10.0.0.0/8       0x0a000000 .. 0x0affffff
+  //   127.0.0.0/8      0x7f000000 .. 0x7fffffff
+  //   172.16.0.0/12    0xac100000 .. 0xac1fffff
+  //   192.168.0.0/16   0xc0a80000 .. 0xc0a8ffff
+  if (n >= 0x0a000000 && n <= 0x0affffff) return true;
+  if (n >= 0x7f000000 && n <= 0x7fffffff) return true;
+  if (n >= 0xac100000 && n <= 0xac1fffff) return true;
+  if (n >= 0xc0a80000 && n <= 0xc0a8ffff) return true;
+  return false;
+}
+
+/** v0.6.3 H2: Permitted IPv6 ranges (loopback, ULA, link-local). */
+function _isPrivateIpv6(ip) {
+  if (typeof ip !== 'string') return false;
+  const lower = ip.replace(/^\[|\]$/g, '').toLowerCase();
+  if (lower === '::1') return true;                            // loopback
+  if (lower.startsWith('fc') || lower.startsWith('fd')) return true;  // fc00::/7 ULA
+  if (lower.startsWith('fe8') || lower.startsWith('fe9')
+      || lower.startsWith('fea') || lower.startsWith('feb')) return true;  // fe80::/10
+  return false;
+}
+
+/** v0.6.3 H2: Always-deny IPv6 ranges (multicast, unspecified). */
+function _isAlwaysDenyIpv6(ip) {
+  if (typeof ip !== 'string') return false;
+  const lower = ip.replace(/^\[|\]$/g, '').toLowerCase();
+  if (lower === '::') return true;                             // unspecified
+  if (lower.startsWith('ff')) return true;                     // ff00::/8 multicast
+  return false;
+}
+
+/**
+ * v0.6.3 H2: Single source of truth for IP allow/deny.
+ * Mirrors `_check_ip_allowed` in the Python SDK.
+ */
+function _checkIpAllowed(ip, allowRemote) {
+  if (!ip || typeof ip !== 'string') return false;
+  // Strip brackets (IPv6 hostnames from URL parsing arrive as `[::1]` on some
+  // Node versions). Both the unwrapper and net.isIP need the bare form.
+  const stripped = ip.replace(/^\[|\]$/g, '');
+  // Unwrap IPv4-mapped IPv6 first so deny/private checks on the IPv4 form apply.
+  const unwrapped = _unwrapIpv4MappedIpv6(stripped);
+  const target = unwrapped !== null ? unwrapped : stripped;
+  const ipKind = net.isIP(target);
+  if (ipKind === 4) {
+    if (_isAlwaysDenyIpv4(target)) return false;
+    if (_isPrivateIpv4(target)) return true;
+    return !!allowRemote;
+  }
+  if (ipKind === 6) {
+    if (_isAlwaysDenyIpv6(target)) return false;
+    if (_isPrivateIpv6(target)) return true;
+    return !!allowRemote;
+  }
+  // Non-IP literal (hostname): syntactic check can't decide. Fall through to
+  // the constructor's hostname handling (allowed iff allowRemote).
+  return null;
+}
+
+// v0.6.3 H2: RFC 6761 §6.3 mandates that `localhost` and any `*.localhost`
+// name MUST resolve to loopback. We trust the OS resolver to honour that —
+// it's the same trust model Python's getaddrinfo()-based validator uses,
+// just made explicit because Node lacks synchronous DNS.
+const _LOOPBACK_HOSTNAMES = new Set(['localhost', 'localhost.localdomain', 'ip6-localhost']);
+function _isCanonicalLoopbackHostname(host) {
+  const lower = host.toLowerCase();
+  if (_LOOPBACK_HOSTNAMES.has(lower)) return true;
+  if (lower.endsWith('.localhost')) return true;  // *.localhost per RFC 6761
+  return false;
+}
+
 function _validateOllamaUrl(url, allowRemote) {
   let parsed;
   try {
@@ -88,36 +240,50 @@ function _validateOllamaUrl(url, allowRemote) {
     throw new Error(`CloakLLM: Invalid Ollama URL '${url}'.`);
   }
   const hostname = parsed.hostname;
+  if (!hostname) {
+    throw new Error(`CloakLLM: Ollama URL '${url}' has no hostname.`);
+  }
 
-  // Fast path for common localhost
-  if (['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname)) {
+  // v0.6.3 H2: RFC 6761 reserved loopback names trusted (regardless of allowRemote).
+  if (_isCanonicalLoopbackHostname(hostname)) {
     return url;
   }
 
-  // Check if it's a private IP
-  if (net.isIP(hostname)) {
-    const parts = hostname.split('.').map(Number);
-    const isPrivate = (
-      parts[0] === 10 ||
-      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-      (parts[0] === 192 && parts[1] === 168) ||
-      parts[0] === 127
+  // v0.6.3 H2: All IP literals — including IPv4-mapped IPv6, integer/octal
+  // forms (rejected by net.isIP), and bracketed IPv6 — go through one filter.
+  const decision = _checkIpAllowed(hostname, allowRemote);
+  if (decision === false) {
+    throw new Error(
+      `CloakLLM: Ollama URL '${url}' resolves to a denied IP (cloud metadata ` +
+      `service, multicast, or non-private address without llmAllowRemote: true). ` +
+      `This protects against SSRF to cloud metadata endpoints (169.254.169.254 etc.) ` +
+      `even when remote Ollama is enabled.`
     );
-    if (isPrivate) return url;
+  }
+  if (decision === true) {
+    return url;
   }
 
+  // decision === null → hostname is not an IP literal. JS has no synchronous
+  // DNS, so we can't resolve here without breaking the synchronous constructor
+  // contract. Allowed iff allowRemote — and we warn so the operator knows
+  // hostname-rebinding mitigation is the operator's responsibility (point at
+  // a hostname you control).
   if (allowRemote) {
     console.warn(
-      `CloakLLM: Ollama URL '${url}' points to a non-local address. ` +
-      'PII data will be sent to this remote server.'
+      `CloakLLM: Ollama URL '${url}' uses a hostname rather than an IP literal. ` +
+      `JS cannot resolve at validation time; ensure the hostname's DNS is under ` +
+      `your control to mitigate DNS-rebinding SSRF. Cloud metadata IP literals ` +
+      `(169.254.169.254 etc.) are still blocked at the IP-literal level.`
     );
     return url;
   }
 
   throw new Error(
-    `CloakLLM: Ollama URL '${url}' points to a non-local address. ` +
-    'Set llmAllowRemote: true to allow remote Ollama instances. ' +
-    'WARNING: PII data will be sent to the remote server.'
+    `CloakLLM: Ollama URL '${url}' uses a non-IP hostname; cannot validate it ` +
+    `as private at construction time. Use a private IP literal (127.0.0.1, ` +
+    `10.x.x.x, etc.) or set llmAllowRemote: true. ` +
+    `WARNING: when allowRemote is set, PII data will be sent to the remote server.`
   );
 }
 
@@ -127,16 +293,19 @@ class LlmDetector {
    */
   constructor(config) {
     this._model = config.llmModel;
-    // F2.1 (v0.6.1): SSRF hardening lands in v0.6.2. Until then, warn whenever
-    // llmAllowRemote: true is set — the validator currently has known bypass
-    // paths (DNS rebinding, integer/octal IPv4, IPv4-mapped IPv6 metadata IPs).
+    // v0.6.3 H2: SSRF hardening landed for IP literals (cloud metadata, multicast,
+    // IPv4-mapped IPv6 unwrap). The hostname-rebinding gap remains because Node
+    // has no synchronous DNS — see _validateOllamaUrl for the hostname caveat.
+    // We still warn on allowRemote=true so the operational risk of off-host PII
+    // is visible.
     if (config && config.llmAllowRemote === true) {
       // eslint-disable-next-line no-console
       console.warn(
-        '[cloakllm] llmAllowRemote: true has known SSRF bypass paths in ' +
-        'v0.6.x (DNS rebinding, integer/octal IPv4, IPv4-mapped IPv6 metadata ' +
-        'addresses). Do NOT use in production until the v0.6.2 SSRF hardening ' +
-        'lands. Tracking: https://github.com/cloakllm/CloakLLM-JS/issues/ssrf-hardening'
+        '[cloakllm] llmAllowRemote: true — PII data will be transmitted to a ' +
+        'non-local Ollama instance. Cloud metadata addresses (169.254.169.254 ' +
+        'etc.) and other always-deny ranges are still blocked at the IP-literal ' +
+        'level, but if you point at a hostname, ensure its DNS is under your ' +
+        'control to mitigate DNS-rebinding SSRF. Prefer running Ollama locally.'
       );
     }
     this._baseUrl = _validateOllamaUrl(
@@ -342,4 +511,13 @@ class LlmDetector {
   }
 }
 
-module.exports = { LlmDetector, BoundedCache };
+module.exports = {
+  LlmDetector,
+  BoundedCache,
+  // v0.6.3 H2: exported for unit testing only — not part of the public API.
+  _checkIpAllowed,
+  _unwrapIpv4MappedIpv6,
+  _isAlwaysDenyIpv4,
+  _isPrivateIpv4,
+  _validateOllamaUrl,
+};
