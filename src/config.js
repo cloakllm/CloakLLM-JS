@@ -189,4 +189,9 @@ class ShieldConfig {
   }
 }
 
-module.exports = { ShieldConfig };
+module.exports = {
+  ShieldConfig,
+  // v0.6.3 SEC-3: exported for runtime callers (shield.exportComplianceConfig)
+  // that need to apply the same path validation as ShieldConfig construction.
+  _validatePath,
+};

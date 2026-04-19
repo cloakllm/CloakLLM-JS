@@ -380,9 +380,15 @@ class LlmDetector {
     if (this._available !== null) return this._available;
     try {
       const nullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null';
+      // v0.6.3 SEC-1: --max-redirs 0 refuses HTTP 3xx redirects. A
+      // malicious Ollama at a permitted IP could 301 to cloud metadata
+      // (169.254.169.254 etc.), bypassing the H2 IP blocklist entirely.
+      // The Ollama API never legitimately returns 3xx for /api/tags or
+      // /api/chat — any redirect is misconfiguration or attack.
       const stdout = this._execFileSync('curl', [
         '-s', '-o', nullDevice, '-w', '%{http_code}',
         '--max-time', '3',
+        '--max-redirs', '0',
         `${this._baseUrl}/api/tags`,
       ], { encoding: 'utf-8', timeout: 5000 });
       const statusCode = parseInt(stdout.trim(), 10);
@@ -453,6 +459,8 @@ class LlmDetector {
       const stdout = this._execFileSync('curl', [
         '-s',
         '--max-time', String(this._timeout),
+        // v0.6.3 SEC-1: refuse 3xx redirects (cloud-metadata SSRF bypass).
+        '--max-redirs', '0',
         '-X', 'POST',
         '-H', 'Content-Type: application/json',
         '-d', payload,
