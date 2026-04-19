@@ -107,6 +107,12 @@ function _legacyCanonicalJson(data) {
   return JSON.stringify(data, (_, v) => {
     if (v && typeof v === 'object' && !Array.isArray(v)) {
       return Object.keys(v)
+        // v0.6.3 H9: filter prototype-pollution vectors before assignment.
+        // Mirrors canonicalJson at line 84 — JSON.parse can produce __proto__
+        // as own enumerable, and `o[k] = v[k]` with k='__proto__' triggers
+        // the [[Set]] semantics that mutate the prototype rather than create
+        // an own property. Same filter keeps the legacy path safe.
+        .filter((k) => k !== '__proto__' && k !== 'constructor' && k !== 'prototype')
         .sort()
         .reduce((o, k) => {
           o[k] = v[k];

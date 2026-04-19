@@ -88,7 +88,14 @@ class Shield {
     this._metrics.calls[callType]++;
     this._metrics.total_ms += totalMs;
     for (const [key, value] of Object.entries(detectionTiming)) {
-      if (!(key in this._metrics.detection)) {
+      // v0.6.3 H9: skip prototype-pollution vector keys. detectionTiming
+      // keys come from backend `Detection.category` values; those are
+      // validated upstream by CATEGORY_NAME_PATTERN, but defense-in-depth
+      // here means a misbehaving custom backend can't silently lose metrics
+      // (write to `__proto__` is a no-op since Object.prototype rejects
+      // non-object assignment) or pollute the prototype chain.
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+      if (!Object.prototype.hasOwnProperty.call(this._metrics.detection, key)) {
         this._metrics.detection[key] = 0;
       }
       this._metrics.detection[key] += value;
@@ -324,6 +331,10 @@ class Shield {
       const { detections, timing: detTiming } = this.detector.detect(text);
       totalDetectionMs += performance.now() - t0;
       for (const [key, value] of Object.entries(detTiming)) {
+        // v0.6.3 H9: same defense as _accumulate — skip prototype-pollution
+        // vector keys so a misbehaving backend can't silently lose batch
+        // metrics or affect the runtime's Object.prototype.
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
         combinedDetectionTiming[key] = (combinedDetectionTiming[key] || 0) + value;
       }
 

@@ -15,6 +15,16 @@ const GENESIS_HASH = '0'.repeat(64);
 
 const _PII_FORBIDDEN_KEYS = ['original_value', 'original_text', 'raw_text', 'plain_text', 'value'];
 
+// v0.6.3 H9: Prototype-pollution vector keys. When user-controlled JSON flows
+// into object key assignments via `obj[k] = v`, these three names trigger
+// JS engine setters that mutate the prototype chain rather than creating own
+// properties — and the pollution affects every object in the runtime.
+// Centralized here so all validation sites use the same definition.
+const _PROTOTYPE_POLLUTION_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+function _isPrototypePollutionKey(k) {
+  return _PROTOTYPE_POLLUTION_KEYS.has(k);
+}
+
 // v0.6.1 B3: allow-list schema validator. Always-on (not gated on complianceMode).
 // See cloakllm-py/cloakllm/audit.py B3 docstring for full rationale.
 const _ENTRY_ALLOWED_KEYS = new Set([
@@ -68,8 +78,20 @@ function _validateMetadataValue(value, depth, path) {
           `AUDIT SCHEMA VIOLATION: metadata${path} key ${JSON.stringify(k)} is not a string.`
         );
       }
-      // skip prototype-pollution vectors
-      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+      // v0.6.3 H9: REJECT prototype-pollution vectors instead of silently
+      // skipping them. The previous `continue` hid the issue from callers,
+      // which means downstream consumers of metadata couldn't rely on its
+      // shape (and a malicious caller's `__proto__` payload silently passed
+      // structural validation while leaving the rest of the dict intact for
+      // pollution-based exploits in any later iterator). Hard error makes
+      // callers strip these keys before passing JSON-parsed data as metadata.
+      if (_isPrototypePollutionKey(k)) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: metadata${path} key ${JSON.stringify(k)} ` +
+          `is a prototype-pollution vector. Strip __proto__/constructor/prototype ` +
+          `from metadata before passing.`
+        );
+      }
       _validateMetadataValue(value[k], depth + 1, `${path}.${k}`);
     }
     return;
@@ -145,7 +167,14 @@ function _validateAuditEntrySchema(entryData) {
           `AUDIT SCHEMA VIOLATION: metadata key ${JSON.stringify(k)} must be a string.`
         );
       }
-      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+      // v0.6.3 H9: see _validateMetadataValue for the rationale — reject loudly.
+      if (_isPrototypePollutionKey(k)) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: metadata key ${JSON.stringify(k)} is a ` +
+          `prototype-pollution vector. Strip __proto__/constructor/prototype ` +
+          `from metadata before passing.`
+        );
+      }
       _validateMetadataValue(metadata[k], 1, `.${k}`);
     }
   }

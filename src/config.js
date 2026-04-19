@@ -77,6 +77,17 @@ class ShieldConfig {
     this.customPatterns = options.customPatterns ?? [];
     /** @type {Array<{name: string, description: string}>} */
     this.customLlmCategories = options.customLlmCategories ?? [];
+    // v0.6.3 H9: validate customPatterns names (was: only customLlmCategories
+    // validated — parity gap that allowed `__proto__`/`constructor`/`prototype`
+    // through to the regex backend, where the category name then flowed into
+    // dynamic object-key writes downstream).
+    for (const { name } of this.customPatterns) {
+      if (typeof name !== 'string' || !/^[A-Z][A-Z0-9_]*$/.test(name)) {
+        throw new Error(
+          `Invalid custom pattern name ${JSON.stringify(name)}. Must be a string matching ^[A-Z][A-Z0-9_]*$`
+        );
+      }
+    }
     // Validate custom LLM category names
     for (const { name } of this.customLlmCategories) {
       if (!/^[A-Z][A-Z0-9_]*$/.test(name)) {
