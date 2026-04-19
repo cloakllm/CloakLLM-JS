@@ -269,10 +269,24 @@ class Shield {
     const presentEntityDetails = (tokenMap.entityDetails || [])
       .filter(ed => presentTokenSet.has(ed.token));
 
+    // v0.6.3 G2 (PII hash oracle fix): pass `text` (the tokenized input) for
+    // BOTH originalText AND sanitizedText. Previously sanitizedText was
+    // `result` — the restored PII — so `sanitized_hash` equaled
+    // sha256(restored_PII). An attacker with audit log read access could
+    // hash candidate PII (sha256("123-45-6789") for SSNs, common email
+    // formats) and confirm matches. Direct PII oracle in production logs.
+    //
+    // New semantics for desanitize entries:
+    //   prompt_hash    = sha256(tokenized_input_text)
+    //   sanitized_hash = sha256(tokenized_input_text)  (equal to prompt_hash)
+    //
+    // The `result` (restored PII) is NEVER hashed and NEVER in the log.
+    // Pre-v0.6.3 chains: shield.verifyAudit({ legacyDesanitizeHash: true }).
+    // Sunset in v0.7.0.
     this.audit.log({
       eventType: 'desanitize',
       originalText: text,
-      sanitizedText: result,
+      sanitizedText: text,  // G2: was `result` (the oracle); now tokenized input
       model,
       provider,
       entityCount: presentTokens.length,  // H3: present-only, not full map
