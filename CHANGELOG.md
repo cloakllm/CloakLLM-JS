@@ -5,6 +5,92 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] - 2026-04-19
+
+JS mirror of the cloakllm-py v0.6.3 security release. See
+`CloakLLM/COMPLIANCE.md` § "v0.6.3 Hardening Summary" for the full
+audit-reviewer overview.
+
+### Phase 0 — streaming audit
+
+- **NEW-3** — OpenAI streaming wrapper writes a `desanitize_stream`
+  audit entry per stream lifecycle (normal completion, errors,
+  consumer-break). Mirrors Python wrappers.
+- **P1-1** — `finish_reason` preserved at token boundaries (was
+  swallowed when `delta.content` produced empty output).
+- **P1-2** — `_safeErrorTypeName` handles `throw null`, `throw "string"`,
+  primitives, etc. without crashing the streaming error handler.
+- **P2-1** — `bytesProcessed` → `charsProcessed` rename (deprecated
+  alias preserved with `console.warn`).
+
+### Security — high severity
+
+- **H2** — Ollama SSRF blocklist with numeric range arithmetic
+  (avoiding the JS signed-32-bit bitwise trap that broke the obvious
+  `(n & 0xffff0000) === 0xa9fe0000` pattern). RFC 6761 canonical
+  loopback names trusted (`localhost`, `*.localhost`,
+  `localhost.localdomain`, `ip6-localhost`). IPv4-mapped IPv6 unwrap
+  for both dotted and hex forms. `192.0.0.0/24` covers Oracle Cloud
+  IMDS. Known gap: `fd00:ec2::254` (AWS IPv6 IMDS in ULA range)
+  deferred to v0.7.0 — Node lacks a synchronous IPv6 normalizer.
+- **SEC-1** — `--max-redirs 0` on both curl call sites refuses HTTP
+  3xx redirects. A malicious Ollama at a permitted IP could 301-redirect
+  to cloud metadata, bypassing the H2 blocklist.
+- **H3** — Desanitize `tokens_used` / `entity_details` filtered to
+  present-only subset; `latency_ms` / `timing.*` bucketed to 10ms.
+- **G2** — Desanitize `sanitized_hash` PII oracle closed
+  (mirror of Python G2). `sanitized_hash == prompt_hash` on desanitize
+  entries; restored PII never hashed.
+- **H4** — Backward-scan audit chain recovery; `auditStrictChain` opt-in
+  refuses silent GENESIS restart on full corruption; partial-write
+  tail detection prepends `\n` on next write.
+- **H5** — `logDir` and `attestationKeyPath` reject NUL bytes and
+  symlinks at construction time. `auditStrictPaths` opt-in promotes
+  outside-CWD warning to error.
+- **SEC-3** — `Shield.exportComplianceConfig(outPath)` validates the
+  runtime path through `_validatePath` (now exported from `config.js`).
+  Opens with `O_NOFOLLOW` + `0o600` on POSIX; ELOOP raised as a clear
+  TOCTOU error.
+- **G7** — Audit dir mode `0o700`, audit log files mode `0o600` on
+  POSIX. Windows path runs unchanged.
+- **H9** — Prototype pollution defenses: `audit.js` metadata validators
+  REJECT `__proto__`/`constructor`/`prototype` keys (was: silent
+  `continue`). `customPatterns` name validation parity with
+  `customLlmCategories`. `_legacyCanonicalJson` filters prototype
+  keys before reduce. `Shield._accumulate` skips prototype-vector
+  metric keys + uses `hasOwnProperty.call` for existence checks.
+
+### Security — informational / observability
+
+- **I3** — JS `verifyAudit()` JSDoc documents the v0.6.0 cross-SDK
+  canonical-JSON asymmetry. Missing `legacyCanonical` JSDoc param
+  added.
+- **I5 / G3** — `Tokenizer.detokenize` AND `StreamDesanitizer.feed`
+  fire a one-time `console.warn` per process when the LLM produces
+  a case-variant of a canonical token. Shared module-level gate
+  (`_caseVariantWarned`) so streaming + batched paths share the warn
+  quota.
+- **I6.1** — npm OIDC trusted publishing (auto-provenance) replaces
+  long-lived NPM_TOKEN. Node 24 in publish workflow for npm CLI ≥ 11.5.
+- **I7** — Cross-SDK round-trip fixtures (`audit_chain_js.jsonl`,
+  `certificate_js.json`, mirrored `*_py.json`). Each SDK's tests
+  verify the OTHER SDK's output.
+
+### Audit-log shape changes (mostly informational)
+
+- Desanitize entries: `entityCount` now means "tokens present in this
+  call" (was: total in map). `tokensUsed` and `entityDetails` filtered
+  to present-only subset. `sanitized_hash` equals `prompt_hash` (both
+  hash the tokenized input). Reconstruct full map from the matching
+  `sanitize` entry.
+
+### Breaking changes
+
+- External tools matching `sanitized_hash` against restored PII text on
+  desanitize entries will no longer find matches — that capability
+  WAS the G2 oracle. Switch to matching `prompt_hash` against
+  tokenized text.
+
 ## [0.6.2] - 2026-04-17
 
 ### Added (hotfix release for v0.6.1 audit findings)
