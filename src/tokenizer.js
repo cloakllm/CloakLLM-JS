@@ -186,12 +186,19 @@ class Tokenizer {
   /**
    * Replace all tokens in text with their original values.
    * Handles case-insensitive matching (LLMs may change casing).
+   *
+   * v0.6.3 I5: when a case-variant substitution occurs (LLM produced
+   * `[email_0]` instead of canonical `[EMAIL_0]`), a one-time console.warn
+   * fires per process so operators know their LLM is generating malformed
+   * tokens. Substitution still succeeds.
+   *
    * @param {string} text
    * @param {TokenMap} tokenMap
    * @returns {string}
    */
   detokenize(text, tokenMap) {
     let result = text;
+    const caseVariantSeen = [];
 
     // Sort tokens by length (longest first) to avoid partial replacements
     const sorted = [...tokenMap.reverse.entries()]
@@ -199,7 +206,26 @@ class Tokenizer {
 
     for (const [token, original] of sorted) {
       const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      result = result.replace(new RegExp(escaped, 'gi'), () => original);
+      result = result.replace(new RegExp(escaped, 'gi'), (matched) => {
+        // v0.6.3 I5: detect case mismatch before substituting.
+        if (matched !== token) {
+          caseVariantSeen.push(matched);
+        }
+        return original;
+      });
+    }
+
+    // v0.6.3 I5: one-time warning if any case-variant substitution happened.
+    if (caseVariantSeen.length > 0 && !_caseVariantWarned) {
+      _caseVariantWarned = true;
+      // eslint-disable-next-line no-console
+      console.warn(
+        `CloakLLM detokenize: substituted a lowercase / case-variant token ` +
+        `(${JSON.stringify(caseVariantSeen[0])}). LLMs that lowercase tokens ` +
+        `indicate prompt drift — consider instructing the model to preserve ` +
+        `token case verbatim. Substitution still succeeded; this warning ` +
+        `fires once per process.`
+      );
     }
 
     // Restore any escaped token-like patterns from the original input
@@ -208,5 +234,10 @@ class Tokenizer {
     return result;
   }
 }
+
+// v0.6.3 I5: process-level one-time warning gate. Module scope (not per
+// Tokenizer instance) — the signal is the same regardless of which Shield
+// or Tokenizer saw the case mismatch.
+let _caseVariantWarned = false;
 
 module.exports = { TokenMap, Tokenizer };
