@@ -10,14 +10,53 @@
  */
 
 const path = require('path');
+const fs = require('fs');
 const { RESERVED_CATEGORIES } = require('./token-spec');
 
-function _validatePath(pathValue, name) {
+/**
+ * v0.6.3 H5: Centralized path validation. Always rejects:
+ *   * paths containing NUL bytes (defense vs C-string truncation)
+ *   * paths that exist as symlinks (attacker-replaceable surface)
+ * Conditionally rejects (when strictPaths=true): paths outside CWD.
+ * Otherwise emits a console.warn for the outside-CWD case (back-compat).
+ */
+function _validatePath(pathValue, name, { strictPaths = false } = {}) {
   if (!pathValue) return;
+  if (typeof pathValue !== 'string') {
+    pathValue = String(pathValue);
+  }
+  if (pathValue.includes('\0')) {
+    throw new Error(
+      `CloakLLM: ${name} contains a NUL byte. Refusing for security.`
+    );
+  }
+  // lstatSync throws if the path doesn't exist; that's fine — only existing
+  // paths can be symlinks. Mkdir/open will create or fail later as appropriate.
+  try {
+    const stats = fs.lstatSync(pathValue);
+    if (stats.isSymbolicLink()) {
+      let target = '<unreadable>';
+      try { target = fs.readlinkSync(pathValue); } catch { /* ignore */ }
+      throw new Error(
+        `CloakLLM: ${name} '${pathValue}' is a symlink (target: '${target}'). ` +
+        `Refusing for security — set the config to the real destination.`
+      );
+    }
+  } catch (e) {
+    if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') {
+      throw e;
+    }
+    // doesn't exist — fine, will be created later
+  }
+
   const resolved = path.resolve(pathValue);
   const cwd = process.cwd();
   if (!resolved.startsWith(cwd)) {
-    console.warn(`CloakLLM: ${name} '${resolved}' is outside the current working directory.`);
+    const msg = `CloakLLM: ${name} '${resolved}' is outside the current working directory.`;
+    if (strictPaths) {
+      throw new Error(msg + ' (auditStrictPaths: true)');
+    }
+    console.warn(msg);
   }
 }
 
@@ -84,6 +123,11 @@ class ShieldConfig {
     // where a silent chain restart could mask tampering.
     this.auditStrictChain = options.auditStrictChain
       ?? (process.env.CLOAKLLM_AUDIT_STRICT_CHAIN ?? '').toLowerCase() === 'true';
+    // v0.6.3 H5: when true, the existing "outside CWD" advisory warning
+    // becomes a hard Error. Defaults to false. Symlink and NUL-byte
+    // rejection are ALWAYS on regardless — they're security invariants.
+    this.auditStrictPaths = options.auditStrictPaths
+      ?? (process.env.CLOAKLLM_AUDIT_STRICT_PATHS ?? '').toLowerCase() === 'true';
 
     // --- Attestation (Ed25519 signing) ---
     /** @type {import('./attestation').DeploymentKeyPair|null} Pre-loaded keypair */
@@ -124,8 +168,8 @@ class ShieldConfig {
       (process.env.CLOAKLLM_CONTEXT_ANALYSIS ?? 'false').toLowerCase() === 'true';
     this.contextRiskThreshold = options.contextRiskThreshold ?? 0.7;
 
-    _validatePath(this.logDir, 'logDir');
-    _validatePath(this.attestationKeyPath, 'attestationKeyPath');
+    _validatePath(this.logDir, 'logDir', { strictPaths: this.auditStrictPaths });
+    _validatePath(this.attestationKeyPath, 'attestationKeyPath', { strictPaths: this.auditStrictPaths });
 
     // --- Middleware ---
     this.autoMode = options.autoMode ?? true;
