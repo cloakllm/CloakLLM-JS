@@ -242,7 +242,17 @@ class AuditLogger {
   _ensureInit() {
     if (this._initialized) return;
 
-    fs.mkdirSync(this._logDir, { recursive: true });
+    // v0.6.3 G7: create the audit dir mode 0o700 so other system users
+    // can't list audit log filenames. On Windows the mode is largely
+    // ignored — operators must rely on NTFS ACLs.
+    fs.mkdirSync(this._logDir, { recursive: true, mode: 0o700 });
+    // If the dir already existed with looser permissions, tighten it.
+    // POSIX-only; Windows chmod is a no-op for these bits.
+    if (process.platform !== 'win32') {
+      try {
+        fs.chmodSync(this._logDir, 0o700);
+      } catch { /* best effort */ }
+    }
 
     // v0.6.3 H4: backward scan across all files (was: read trailing line of
     // most-recent file only and silently start fresh if it failed to parse).
@@ -403,7 +413,17 @@ class AuditLogger {
       payload = '\n' + payload;
       this._needsLeadingNewline = false;
     }
-    fs.appendFileSync(logFile, payload);
+    // v0.6.3 G7: ensure new audit logs are created with mode 0o600 so other
+    // system users can't read entity hashes / token counts / categories.
+    // appendFileSync's `mode` option is honoured ONLY when the file is being
+    // CREATED — existing files keep their current mode. To tighten existing
+    // audit files we'd need to chmod every write, which is wasteful; we
+    // instead chmod once after the first write that creates the file.
+    const fileExisted = fs.existsSync(logFile);
+    fs.appendFileSync(logFile, payload, { mode: 0o600 });
+    if (!fileExisted && process.platform !== 'win32') {
+      try { fs.chmodSync(logFile, 0o600); } catch { /* best effort */ }
+    }
 
     // Update chain state
     this._prevHash = entryHash;

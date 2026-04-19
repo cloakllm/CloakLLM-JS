@@ -216,16 +216,10 @@ class Tokenizer {
     }
 
     // v0.6.3 I5: one-time warning if any case-variant substitution happened.
-    if (caseVariantSeen.length > 0 && !_caseVariantWarned) {
-      _caseVariantWarned = true;
-      // eslint-disable-next-line no-console
-      console.warn(
-        `CloakLLM detokenize: substituted a lowercase / case-variant token ` +
-        `(${JSON.stringify(caseVariantSeen[0])}). LLMs that lowercase tokens ` +
-        `indicate prompt drift — consider instructing the model to preserve ` +
-        `token case verbatim. Substitution still succeeded; this warning ` +
-        `fires once per process.`
-      );
+    // Delegates to the shared `_warnCaseMismatchOnce` so streaming and batched
+    // paths share the single process-level limit.
+    if (caseVariantSeen.length > 0) {
+      _warnCaseMismatchOnce(caseVariantSeen[0]);
     }
 
     // Restore any escaped token-like patterns from the original input
@@ -235,9 +229,35 @@ class Tokenizer {
   }
 }
 
-// v0.6.3 I5: process-level one-time warning gate. Module scope (not per
-// Tokenizer instance) — the signal is the same regardless of which Shield
-// or Tokenizer saw the case mismatch.
+// v0.6.3 I5/G3: process-level one-time warning gate. Module scope (not per
+// Tokenizer instance) — the signal is the same regardless of which path
+// (batched detokenize or streaming feed) saw the case mismatch first.
+// Operators get one warning per process across ALL desanitize paths.
 let _caseVariantWarned = false;
 
-module.exports = { TokenMap, Tokenizer };
+/**
+ * v0.6.3 I5/G3: shared one-shot warning trigger for case-variant token
+ * substitution. Called by Tokenizer.detokenize() AND
+ * StreamDesanitizer.feed() — single process-level gate so streaming +
+ * batched paths share the warning quota.
+ *
+ * Streaming is the dominant production path under v0.6.3 (the streaming
+ * audit fix in NEW-3 makes it the default for OpenAI/LiteLLM streaming
+ * responses). Without this shared gate, streaming users get no signal
+ * that their LLM is producing malformed tokens — defeats the I5 purpose.
+ *
+ * @param {string} sample - the lowercase / case-variant token observed
+ */
+function _warnCaseMismatchOnce(sample) {
+  if (_caseVariantWarned) return;
+  _caseVariantWarned = true;
+  // eslint-disable-next-line no-console
+  console.warn(
+    `CloakLLM detokenize: substituted a lowercase / case-variant token ` +
+    `(${JSON.stringify(sample)}). LLMs that lowercase tokens indicate ` +
+    `prompt drift — consider instructing the model to preserve token case ` +
+    `verbatim. Substitution still succeeded; this warning fires once per process.`
+  );
+}
+
+module.exports = { TokenMap, Tokenizer, _warnCaseMismatchOnce };

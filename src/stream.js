@@ -10,6 +10,10 @@ const {
   ESCAPED_CLOSE,
   MAX_TOKEN_LENGTH: MAX_TOKEN_LEN,
 } = require('./token-spec');
+// v0.6.3 I5/G3: shared one-shot warning gate. Streaming is the dominant
+// production path; without wiring this in, streaming users get no signal
+// when their LLM lowercases tokens.
+const { _warnCaseMismatchOnce } = require('./tokenizer');
 
 const UNESCAPE_RE = new RegExp(`${ESCAPED_OPEN}([A-Z][A-Z0-9_]*_(?:\\d+|REDACTED))${ESCAPED_CLOSE}`, 'g');
 
@@ -27,8 +31,15 @@ class StreamDesanitizer {
         this._buffer = '';
         /** @type {Map<string, string>} lowercase token -> original value */
         this._reverseCI = new Map();
+        /** v0.6.3 I5/G3: lowercase token -> CANONICAL form (the case the
+         *  token was issued in during sanitize). Used by feed() to detect
+         *  case-variant substitutions and fire the shared one-shot warning.
+         *  @type {Map<string, string>} */
+        this._canonicalByLower = new Map();
         for (const [token, original] of tokenMap.reverse) {
-            this._reverseCI.set(token.toLowerCase(), original);
+            const lower = token.toLowerCase();
+            this._reverseCI.set(lower, original);
+            this._canonicalByLower.set(lower, token);
         }
         // v0.6.3 NEW-3.e + P2-1: track cumulative chunk CHARS (not bytes —
         // String.length is UTF-16 code units, not byte count). Middleware
@@ -106,9 +117,18 @@ class StreamDesanitizer {
                 }
             } else {
                 const candidate = this._buffer.slice(0, closePos + 1);
-                const original = this._reverseCI.get(candidate.toLowerCase());
+                const candidateLower = candidate.toLowerCase();
+                const original = this._reverseCI.get(candidateLower);
 
                 if (original !== undefined) {
+                    // v0.6.3 I5/G3: detect case-variant before substituting.
+                    // `candidate` is what the LLM emitted; canonical is what
+                    // we issued during sanitize. If they differ, fire the
+                    // one-shot warning so operators know to fix the prompt.
+                    const canonical = this._canonicalByLower.get(candidateLower);
+                    if (candidate !== canonical) {
+                        _warnCaseMismatchOnce(candidate);
+                    }
                     parts.push(original);
                 } else {
                     parts.push(candidate);

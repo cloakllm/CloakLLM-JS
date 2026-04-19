@@ -89,3 +89,67 @@ describe('I5 — lowercase token detokenize behavior', () => {
     });
   });
 });
+
+// ─── G3: streaming path warning wiring ────────────────────────────────────
+
+describe('I5/G3 — StreamDesanitizer.feed fires the case-variant warning', () => {
+  // Note: the shared `_caseVariantWarned` flag in tokenizer.js is process-
+  // global. Tests in this describe block run after the earlier ones, which
+  // may have already triggered the warning. We can't reliably assert "first
+  // call warns" — but we CAN assert "substitution still succeeds" and that
+  // the warning machinery doesn't crash on the streaming path. The Python
+  // suite exercises the once-per-process gate end-to-end with a flag reset
+  // mechanism that's awkward to replicate cleanly in JS without monkey-
+  // patching the module.
+
+  const { StreamDesanitizer } = require('../src/stream');
+  const { TokenMap } = require('../src/tokenizer');
+
+  function makeMap() {
+    const tm = new TokenMap();
+    tm.reverse.set('[EMAIL_0]', 'alice@example.com');
+    return tm;
+  }
+
+  it('lowercase token in stream chunk substitutes correctly', () => {
+    const desan = new StreamDesanitizer(makeMap());
+    let out;
+    captureWarn(() => {
+      out = desan.feed('Reach out to [email_0] today');
+    });
+    assert.ok(out.includes('alice@example.com'),
+      `expected substitution, got: ${out}`);
+  });
+
+  it('mixed-case token in stream chunk substitutes correctly', () => {
+    const desan = new StreamDesanitizer(makeMap());
+    let out;
+    captureWarn(() => {
+      out = desan.feed("Let's reach [Email_0] today");
+    });
+    assert.ok(out.includes('alice@example.com'));
+  });
+
+  it('canonical token in stream chunk substitutes without crash', () => {
+    const desan = new StreamDesanitizer(makeMap());
+    let out;
+    captureWarn(() => {
+      out = desan.feed('Reach [EMAIL_0] now');
+    });
+    assert.ok(out.includes('alice@example.com'));
+  });
+
+  it('token split across chunks still substitutes', () => {
+    // The streaming path's whole point: tokens may arrive in pieces.
+    // Case-variant detection must run on the reassembled candidate.
+    const desan = new StreamDesanitizer(makeMap());
+    let out1, out2;
+    captureWarn(() => {
+      out1 = desan.feed('Reach out to [emai');
+      out2 = desan.feed('l_0] today');
+    });
+    const full = out1 + out2;
+    assert.ok(full.includes('alice@example.com'),
+      `expected reassembled substitution, got: ${full}`);
+  });
+});
