@@ -25,6 +25,19 @@ export interface ShieldConfigOptions {
   entityHashKey?: string;
   auditEnabled?: boolean;
   logDir?: string;
+  /**
+   * v0.6.3 H4: refuse silent GENESIS chain restart when log files exist
+   * but recovery returned nothing. Closes the surface where an attacker
+   * who can corrupt all logs masks tampering as a routine restart.
+   * Default false for back-compat. Env: CLOAKLLM_AUDIT_STRICT_CHAIN=true.
+   */
+  auditStrictChain?: boolean;
+  /**
+   * v0.6.3 H5: promote outside-CWD path warnings to hard errors for
+   * `logDir` and `attestationKeyPath`. Default false for back-compat.
+   * Env: CLOAKLLM_AUDIT_STRICT_PATHS=true.
+   */
+  auditStrictPaths?: boolean;
   autoMode?: boolean;
   skipModels?: string[];
   attestationKey?: DeploymentKeyPair | null;
@@ -60,6 +73,10 @@ export class ShieldConfig {
   entityHashKey: string;
   auditEnabled: boolean;
   logDir: string;
+  /** v0.6.3 H4: refuse silent GENESIS chain restart on full log corruption. */
+  auditStrictChain: boolean;
+  /** v0.6.3 H5: promote outside-CWD path warnings to errors. */
+  auditStrictPaths: boolean;
   autoMode: boolean;
   skipModels: string[];
   attestationKey: DeploymentKeyPair | null;
@@ -309,7 +326,19 @@ export class AuditLogger {
     keyId?: string | null;
   }): Record<string, any> | null;
   verifyChain(
-    options?: string | { logFilePath?: string; outputFormat?: 'compliance_report' } | null
+    options?:
+      | string
+      | {
+          logFilePath?: string;
+          outputFormat?: 'compliance_report';
+          /**
+           * v0.6.4: recompute hashes using the v0.6.0 canonicalizer. Required
+           * for chains written by Python v0.5.x or v0.6.0 containing non-ASCII.
+           * Sunset in v0.7.0.
+           */
+          legacyCanonical?: boolean;
+        }
+      | null
   ): { valid: boolean; errors: string[]; finalSeq: number } | ComplianceReport;
   getStats(): Record<string, any>;
 }

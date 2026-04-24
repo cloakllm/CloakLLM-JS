@@ -25,16 +25,42 @@ const MAP_TTL_MS = 5 * 60 * 1000; // 5 minutes
 let _shield = null;
 let _enabled = false;
 
-/** @type {Map<string, {tokenMap: TokenMap, created: number}>} */
+/**
+ * v0.6.4 G12: store `lastAccessed` (refreshed on every retrieval) instead of
+ * just `created`. The previous wall-clock TTL evicted any token map exactly
+ * 5 minutes after the FIRST request that created it — even if the same
+ * conversation was actively reusing the map every few seconds. Long-running
+ * multi-turn conversations would silently lose their token map mid-stream
+ * and tokens like [EMAIL_0] would no longer round-trip.
+ *
+ * The MCP server already uses an idle-refresh pattern (server.py refreshes
+ * `created` on map reuse). Aligning the JS middleware to the same semantics.
+ *
+ * @type {Map<string, {tokenMap: TokenMap, lastAccessed: number}>}
+ */
 const _activeMaps = new Map();
 
 function _cleanupExpiredMaps() {
   const now = Date.now();
   for (const [key, entry] of _activeMaps) {
-    if (now - entry.created > MAP_TTL_MS) {
+    // v0.6.4 G12: idle-based eviction — only drops maps that have been
+    // untouched for MAP_TTL_MS, not maps that were merely created that long ago.
+    if (now - entry.lastAccessed > MAP_TTL_MS) {
       _activeMaps.delete(key);
     }
   }
+}
+
+/**
+ * v0.6.4 G12: retrieve a stored map AND refresh its lastAccessed timestamp.
+ * Single helper so every reuse site (sync stream, async stream, future
+ * callers) goes through one path.
+ */
+function _getActiveMap(key) {
+  const entry = _activeMaps.get(key);
+  if (!entry) return undefined;
+  entry.lastAccessed = Date.now();
+  return entry.tokenMap;
 }
 
 /** @type {WeakMap<Object, Function>} client -> original create function */
@@ -235,7 +261,8 @@ function _sanitizeMessages(messages, model) {
   });
 
   _cleanupExpiredMaps();
-  _activeMaps.set(callKey, { tokenMap, created: Date.now() });
+  // v0.6.4 G12: store lastAccessed (refreshed via _getActiveMap on retrieval).
+  _activeMaps.set(callKey, { tokenMap, lastAccessed: Date.now() });
 
   // Inject system instruction so LLM treats tokens as real values
   if (tokenMap && tokenMap.entityCount > 0) {

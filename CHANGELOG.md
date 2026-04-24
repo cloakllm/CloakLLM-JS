@@ -5,6 +5,51 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-04-20
+
+Polish release — v0.6.4 round-up of items the v0.6.3 review pass parked.
+Safe drop-in upgrade.
+
+### Hardening
+
+- **G8 — Timing-safe hash comparison in `verifyChain`.** `storedHash !== recomputed`
+  short-circuits character-by-character; replaced with
+  `crypto.timingSafeEqual` (with length pre-check, since the API throws
+  on length mismatch). Defense-in-depth on `verifyChain` timing channel.
+
+### Correctness
+
+- **G9 — `Object.create(null)` accumulator in `_legacyCanonicalJson`.** The
+  filter at line 115 already strips `__proto__`/`constructor`/`prototype`
+  before any assignment, so functional behaviour is unchanged. `Object.create(null)`
+  is the maximally strict accumulator — even if a future change drops
+  the filter, the prototype-less base means `o['__proto__'] = X` creates
+  an own property rather than triggering `Object.prototype`'s setter.
+
+### Ergonomics
+
+- **G10 — JSDoc for `verifyChain.legacyCanonical`.** Documents the v0.6.0
+  Python-vs-JS canonicalizer asymmetry (Python escaped non-ASCII as
+  `\uXXXX`; JS preserved UTF-8) and points to
+  `CloakLLM/COMPLIANCE.md` § Cross-Language Compatibility for the
+  per-SDK flag table. Same content was already in `Shield.verifyAudit`'s
+  JSDoc; the lower-level `AuditLogger.verifyChain` was missed.
+- **G12 — JS middleware idle TTL.** `_activeMaps` now stores `lastAccessed`
+  (refreshed on retrieval via `_getActiveMap`) instead of `created`.
+  Aligns with the MCP server's idle-refresh pattern. The current
+  middleware's single-use-per-call semantics make this defense-in-depth
+  rather than bug-fix, but it removes a future footgun and clarifies
+  the eviction semantic ("untouched for 5 min" vs "5 min since first
+  request").
+
+### TypeScript types
+
+- `auditStrictChain` and `auditStrictPaths` (added in v0.6.3 but missing
+  from `index.d.ts`) declared on both `ShieldConfigOptions` (input) and
+  `ShieldConfig` (runtime) shapes.
+- `AuditLogger.verifyChain.options.legacyCanonical?: boolean` now
+  documented in the type signature.
+
 ## [0.6.3] - 2026-04-19
 
 JS mirror of the cloakllm-py v0.6.3 security release. See

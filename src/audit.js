@@ -440,6 +440,17 @@ class AuditLogger {
    * @param {'compliance_report'} [options.outputFormat] - When set, returns a
    *   structured compliance report dict instead of the default { valid, errors, finalSeq }.
    *   When omitted, the existing return shape is preserved (backward compatible).
+   * @param {boolean} [options.legacyCanonical] - When true, recompute hashes
+   *   using the v0.6.0-compatible canonicalizer (`ensure_ascii=true` /
+   *   `\uXXXX`-escaped non-ASCII). Required to verify audit chains that were
+   *   originally written by **Python v0.5.x or v0.6.0** and contain non-ASCII
+   *   characters (names, addresses, etc.) — Python escaped them, JS preserved
+   *   UTF-8, so the canonical bytes diverged. v0.6.1+ chains use a unified
+   *   canonicalizer and verify cross-SDK without this flag. **Sunset in v0.7.0
+   *   with a deprecation warning whenever the flag is set.**
+   *
+   *   See `CloakLLM/COMPLIANCE.md` § Cross-Language Compatibility for the
+   *   full asymmetry description and a per-SDK flag table.
    *
    * Backward-compat: passing a string (the old `logFilePath` positional argument)
    * is still accepted.
@@ -558,10 +569,26 @@ class AuditLogger {
         const storedHash = entry.entry_hash;
         delete entry.entry_hash;
         const recomputed = AuditLogger.computeHash(entry, { legacyCanonical });
-        if (storedHash !== recomputed) {
+        // v0.6.4 G8: timing-safe comparison via crypto.timingSafeEqual.
+        // String !== short-circuits at first mismatched char — an attacker
+        // with many verifyChain calls could in principle infer hash bytes
+        // by timing. Length pre-check is required (timingSafeEqual throws
+        // on length mismatch) and is itself constant-time on length only.
+        let tampered = true;
+        if (typeof storedHash === 'string' && storedHash.length === recomputed.length) {
+          try {
+            tampered = !crypto.timingSafeEqual(
+              Buffer.from(storedHash, 'hex'),
+              Buffer.from(recomputed, 'hex'),
+            );
+          } catch {
+            tampered = true;  // hex parse failure is always tampered
+          }
+        }
+        if (tampered) {
           errors.push(
             `${fname}:${i + 1} seq=${entry.seq} — ` +
-            `Entry tampered: stored_hash=${storedHash.slice(0, 16)}..., ` +
+            `Entry tampered: stored_hash=${(storedHash || '').slice(0, 16)}..., ` +
             `recomputed=${recomputed.slice(0, 16)}...`
           );
         }

@@ -114,10 +114,14 @@ function _legacyCanonicalJson(data) {
         // an own property. Same filter keeps the legacy path safe.
         .filter((k) => k !== '__proto__' && k !== 'constructor' && k !== 'prototype')
         .sort()
+        // v0.6.4 G9: Object.create(null) instead of {} as the accumulator.
+        // Defense-in-depth: even if a future change drops the filter above,
+        // the prototype-less base means o['__proto__'] = X creates an own
+        // property rather than triggering Object.prototype's setter.
         .reduce((o, k) => {
           o[k] = v[k];
           return o;
-        }, {});
+        }, Object.create(null));
     }
     return v;
   });
