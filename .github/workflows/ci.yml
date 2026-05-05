@@ -39,3 +39,28 @@ jobs:
       # If a CVE without an upstream fix appears, document the exception inline.
       - name: npm audit
         run: npm audit --audit-level=moderate
+
+      # v0.6.5: Pack the package and require it from a fresh dir. Catches
+      # broken `files` field, missing dist files, or package.json metadata
+      # that would only surface on user installs. Same lesson as the Py +
+      # MCP install-tests: `node --test` over local source is not the same
+      # as `npm install` of the published tarball.
+      - name: Pack + require-smoke from clean dir
+        if: matrix.node-version == 22
+        run: |
+          npm pack
+          mkdir -p /tmp/pack-test && cd /tmp/pack-test && npm init -y > /dev/null
+          npm install $GITHUB_WORKSPACE/cloakllm-*.tgz
+          node -e "
+          const { Shield, ShieldConfig } = require('cloakllm');
+          const shield = new Shield(new ShieldConfig({ auditEnabled: false }));
+          const [sanitized, tm] = shield.sanitize('Email me at john@example.com please');
+          if (!sanitized.includes('[EMAIL_0]')) {
+            throw new Error('expected [EMAIL_0] in ' + sanitized);
+          }
+          const restored = shield.desanitize(sanitized, tm);
+          if (!restored.includes('john@example.com')) {
+            throw new Error('round-trip failed: ' + restored);
+          }
+          console.log('install-smoke: OK — cloakllm round-trip works from packed tarball');
+          "

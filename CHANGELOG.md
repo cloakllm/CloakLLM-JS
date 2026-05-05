@@ -5,6 +5,22 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] - 2026-04-24
+
+Drop-in safe from v0.6.4. Mirror of cloakllm-py 0.6.5 + cloakllm-mcp 0.6.5
+— adds a CI install-smoke step learned from the v0.6.4.post1 FastMCP
+hotfix postmortem.
+
+### CI / supply-chain hardening
+
+- **New pack-smoke step in `ci.yml`.** Runs `npm pack` to produce the
+  publishable tarball, then installs it into a fresh directory (no
+  `npm install` shortcut over the local checkout) and runs a round-trip
+  sanitize/desanitize via `require('cloakllm')`. Catches broken `files`
+  field, missing dist files, or package.json metadata that would only
+  surface on `npm install` from the registry. Runs on Node 22 only
+  (the matrix above already covers test-suite breadth across 18/20/22).
+
 ## [0.6.4] - 2026-04-20
 
 Polish release — v0.6.4 round-up of items the v0.6.3 review pass parked.
