@@ -137,3 +137,70 @@ describe('I7 — JS-written fixtures still verify in JS', () => {
     assert.ok(cert.verify(publicKey));
   });
 });
+
+// ─── v0.7.0 A4a-7: cross-SDK BIAS-DETECTION chain verification ────────────
+
+const BIAS_EVENT_TYPES = [
+  'bias_session_start',
+  'bias_pseudonymise',
+  'bias_finding',
+  'bias_session_end',
+];
+
+describe('I7 — JS verifies Python-written bias-detection chain', () => {
+  it('Python bias chain passes JS verifyChain', () => {
+    if (!fixtureExists('audit_chain_bias_py.jsonl')) return;
+    const dir = tmpDir();
+    try {
+      fs.copyFileSync(
+        fixturePath('audit_chain_bias_py.jsonl'),
+        path.join(dir, 'audit_2026-04-19.jsonl'),
+      );
+      const shield = new Shield(new ShieldConfig({ logDir: dir, auditEnabled: false }));
+      const { valid, errors } = shield.audit.verifyChain();
+      assert.ok(
+        valid,
+        'Python bias chain failed JS verifyChain. This indicates the ' +
+        'bias_context canonical JSON diverged between SDKs. Errors: ' +
+        JSON.stringify(errors),
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('Python bias chain has expected event shape', () => {
+    if (!fixtureExists('audit_chain_bias_py.jsonl')) return;
+    const content = fs.readFileSync(fixturePath('audit_chain_bias_py.jsonl'), 'utf-8');
+    const entries = content.split('\n').filter(l => l.trim()).map(JSON.parse);
+    assert.deepStrictEqual(
+      entries.map(e => e.event_type), BIAS_EVENT_TYPES,
+      'unexpected event_type order in Python bias chain',
+    );
+    for (const e of entries) {
+      assert.ok(e.article_ref.includes('EU_AI_Act_Art_4a'),
+        `entry missing EU_AI_Act_Art_4a: ${JSON.stringify(e.article_ref)}`);
+      assert.equal(e.compliance_version, 'eu_ai_act_article12_v1');
+      assert.equal(e.pii_in_log, false);
+      assert.ok(e.bias_context && e.bias_context.session_id);
+    }
+  });
+});
+
+describe('I7 — JS bias chain self-verifies (sanity)', () => {
+  it('JS bias chain self-verifies', () => {
+    if (!fixtureExists('audit_chain_bias_js.jsonl')) return;
+    const dir = tmpDir();
+    try {
+      fs.copyFileSync(
+        fixturePath('audit_chain_bias_js.jsonl'),
+        path.join(dir, 'audit_2026-04-19.jsonl'),
+      );
+      const shield = new Shield(new ShieldConfig({ logDir: dir, auditEnabled: false }));
+      const { valid, errors } = shield.audit.verifyChain();
+      assert.ok(valid, `JS self bias-chain failed: ${JSON.stringify(errors)}`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

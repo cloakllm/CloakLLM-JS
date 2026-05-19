@@ -50,6 +50,37 @@ const LLM_CATEGORIES = new Set([
   'NATIONAL_ID', 'BIOMETRIC', 'USERNAME', 'PASSWORD', 'VEHICLE',
 ]);
 
+/**
+ * Special-category (GDPR Article 9 / EU AI Act Article 4a) categories.
+ *
+ * These categories represent special-category personal data per GDPR Art. 9
+ * and are pseudonymised through `BiasDetectionSession` for Article 4a
+ * bias-detection workflows (v0.7.0). They are deliberately NOT auto-detected
+ * by the regex pass — free-text patterns for race, ethnicity, religion, etc.
+ * have unacceptably high false-positive rates and the categories themselves
+ * are context-dependent. Spans are introduced via:
+ *   1) `BiasDetectionSession.pseudonymise(text, { forceCategories })` —
+ *      caller declares which spans map to which special category.
+ *   2) The LLM detector (Ollama pass) when the operator opts in by setting
+ *      `biasDetectionCategories: true` on ShieldConfig.
+ *   3) Custom user backends that have explicit knowledge.
+ *
+ * Treating these as a separate Set (rather than merging into LLM_CATEGORIES)
+ * keeps Article 4a auditability sharp: any audit consumer can ask "did this
+ * session touch a special category?" by intersecting with
+ * `SPECIAL_CATEGORY_CATEGORIES`.
+ */
+const SPECIAL_CATEGORY_CATEGORIES = new Set([
+  'RACE',                // GDPR Art. 9: racial origin
+  'ETHNICITY',           // GDPR Art. 9: ethnic origin
+  'RELIGION',            // GDPR Art. 9: religious or philosophical beliefs
+  'POLITICAL_OPINION',   // GDPR Art. 9: political opinions
+  'HEALTH_BIOMETRIC',    // GDPR Art. 9: health data + biometric data
+  'SEXUAL_ORIENTATION',  // GDPR Art. 9: sex life or sexual orientation
+  'TRADE_UNION',         // GDPR Art. 9: trade union membership
+  'GENETIC',             // GDPR Art. 9: genetic data
+]);
+
 /** Locale-specific categories. */
 const LOCALE_CATEGORIES = new Set([
   'PHONE_DE', 'PHONE_DE_LAND', 'VAT_DE',
@@ -70,7 +101,8 @@ const LOCALE_CATEGORIES = new Set([
 /** All built-in categories combined. */
 const BUILTIN_CATEGORIES = new Set([
   ...REGEX_CATEGORIES, ...NER_CATEGORIES,
-  ...LLM_CATEGORIES, ...LOCALE_CATEGORIES,
+  ...LLM_CATEGORIES, ...SPECIAL_CATEGORY_CATEGORIES,
+  ...LOCALE_CATEGORIES,
 ]);
 
 /** Reserved categories that custom patterns must not use. */
@@ -129,6 +161,7 @@ module.exports = {
   REGEX_CATEGORIES,
   NER_CATEGORIES,
   LLM_CATEGORIES,
+  SPECIAL_CATEGORY_CATEGORIES,
   LOCALE_CATEGORIES,
   BUILTIN_CATEGORIES,
   RESERVED_CATEGORIES,
