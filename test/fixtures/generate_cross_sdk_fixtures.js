@@ -21,7 +21,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 
-const { Shield, ShieldConfig } = require('../../src');
+const { Shield, ShieldConfig, BiasDetectionSession } = require('../../src');
 const { DeploymentKeyPair, SanitizationCertificate } = require('../../src/attestation');
 
 const HERE = __dirname;
@@ -94,6 +94,55 @@ function writeAuditChainFixture(outPath) {
   }
 }
 
+async function writeBiasAuditChainFixture(outPath) {
+  // v0.7.0 A4a-7: chain containing all 4 bias_* event types. Mirror of
+  // _write_bias_audit_chain_fixture in the Python generator.
+  const dir = tmpDir();
+  try {
+    const shield = new Shield(new ShieldConfig({
+      logDir: dir,
+      auditEnabled: true,
+      complianceMode: 'eu_ai_act_article12',
+    }));
+    await BiasDetectionSession.run({
+      shield,
+      purpose: 'Cross-SDK I7 bias-detection fixture chain.',
+      necessityJustification: (
+        'Fixture for cross-SDK canonical-JSON equivalence regression test. ' +
+        'No real bias detection is being performed.'
+      ),
+      categoriesAllowed: ['RACE', 'RELIGION'],
+      maxLifetimeSeconds: 60,
+    }, (session) => {
+      session.pseudonymise('Asian Buddhist patient', {
+        forceCategories: [[0, 5, 'RACE'], [6, 14, 'RELIGION']],
+      });
+      session.recordFinding({
+        findingSummary: 'Cross-SDK fixture: no real bias finding.',
+        biasMetrics: { fixture: true, n: 1 },
+      });
+    });
+    const chainFiles = fs.readdirSync(dir).filter(f => f.startsWith('audit_')).sort();
+    if (chainFiles.length === 0) throw new Error('no bias audit file produced');
+    const content = fs.readFileSync(path.join(dir, chainFiles[chainFiles.length - 1]), 'utf-8');
+    fs.writeFileSync(outPath, content, 'utf-8');
+    const { valid, errors, finalSeq } = shield.audit.verifyChain();
+    return {
+      format: 'jsonl',
+      writer_sdk: 'javascript',
+      writer_version: '0.7.0',
+      chain_valid: valid,
+      chain_errors: errors,
+      final_seq: finalSeq,
+      entries: content.split('\n').filter(l => l.trim()).length,
+      event_types: ['bias_session_start', 'bias_pseudonymise',
+                    'bias_finding', 'bias_session_end'],
+    };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 // Recursively sort object keys so JSON.stringify produces stable output.
 function sortKeys(value) {
   if (Array.isArray(value)) return value.map(sortKeys);
@@ -142,17 +191,20 @@ function writeCertificateFixture(outPath) {
   };
 }
 
-function main() {
+async function main() {
   fs.mkdirSync(JS_FIXTURES, { recursive: true });
   fs.mkdirSync(PY_FIXTURES, { recursive: true });
 
   const chainPathJs = path.join(JS_FIXTURES, 'audit_chain_js.jsonl');
+  const biasChainPathJs = path.join(JS_FIXTURES, 'audit_chain_bias_js.jsonl');
   const certPathJs = path.join(JS_FIXTURES, 'certificate_js.json');
 
   const chainMeta = writeAuditChainFixture(chainPathJs);
+  const biasChainMeta = await writeBiasAuditChainFixture(biasChainPathJs);
   const certMeta = writeCertificateFixture(certPathJs);
 
   fs.copyFileSync(chainPathJs, path.join(PY_FIXTURES, 'audit_chain_js.jsonl'));
+  fs.copyFileSync(biasChainPathJs, path.join(PY_FIXTURES, 'audit_chain_bias_js.jsonl'));
   fs.copyFileSync(certPathJs, path.join(PY_FIXTURES, 'certificate_js.json'));
 
   // Merge with existing metadata (Python writer's keys preserved).
@@ -165,6 +217,7 @@ function main() {
     } catch { /* ignore */ }
   }
   existing.javascript_chain = chainMeta;
+  existing.javascript_bias_chain = biasChainMeta;
   existing.javascript_certificate = certMeta;
   existing.regenerated_at_utc = new Date().toISOString().slice(0, 10);
   // sortKeys recursive helper for stable byte output — `JSON.stringify(x, [..keys..])`
@@ -174,9 +227,13 @@ function main() {
   fs.writeFileSync(metaPathPy, payload, 'utf-8');
 
   console.log(`wrote audit_chain_js.jsonl (${chainMeta.entries} entries, valid=${chainMeta.chain_valid})`);
+  console.log(`wrote audit_chain_bias_js.jsonl (${biasChainMeta.entries} entries, valid=${biasChainMeta.chain_valid})`);
   console.log(`wrote certificate_js.json (self_verify_ok=${certMeta.self_verify_ok})`);
-  console.log(`mirrored both into ../cloakllm-py/tests/fixtures/`);
+  console.log(`mirrored all three into ../cloakllm-py/tests/fixtures/`);
   console.log(`updated cross_sdk_metadata.json in both repos`);
 }
 
-main();
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

@@ -32,11 +32,11 @@ function cmdScan() {
   const analysis = shield.analyze(text, { redactValues: !showPii });
 
   if (analysis.entity_count === 0) {
-    console.log('✅ No sensitive entities detected.');
+    console.log('[OK] No sensitive entities detected.');
     return;
   }
 
-  console.log(`⚠️  Found ${analysis.entity_count} sensitive entities:\n`);
+  console.log(`[WARN]  Found ${analysis.entity_count} sensitive entities:\n`);
 
   for (const ent of analysis.entities) {
     console.log(`  [${ent.category}] "${ent.text}"`);
@@ -44,19 +44,19 @@ function cmdScan() {
   }
 
   const [sanitized, tokenMap] = shield.sanitize(text);
-  console.log(`\n${'─'.repeat(60)}`);
+  console.log(`\n${'-'.repeat(60)}`);
   console.log(`ORIGINAL:  ${showPii ? text : '***'}`);
   console.log(`SANITIZED: ${sanitized}`);
-  console.log(`${'─'.repeat(60)}`);
+  console.log(`${'-'.repeat(60)}`);
   console.log(`\nToken map (${tokenMap.entityCount} entities):`);
   for (const [token, original] of tokenMap.reverse) {
-    console.log(`  ${token} → "${showPii ? original : '***'}"`);
+    console.log(`  ${token} -> "${showPii ? original : '***'}"`);
   }
 
   // Context risk analysis (opt-in)
   if (contextRisk) {
     const risk = shield.analyzeContextRisk(sanitized);
-    console.log(`\n${'─'.repeat(60)}`);
+    console.log(`\n${'-'.repeat(60)}`);
     console.log(`CONTEXT RISK: ${risk.risk_level.toUpperCase()} (score: ${risk.risk_score.toFixed(3)})`);
     console.log(`  Token density: ${risk.token_density.toFixed(3)}`);
     console.log(`  Identifying descriptors: ${risk.identifying_descriptors}`);
@@ -64,7 +64,7 @@ function cmdScan() {
     if (risk.warnings.length > 0) {
       console.log('  Warnings:');
       for (const w of risk.warnings) {
-        console.log(`    • ${w}`);
+        console.log(`    * ${w}`);
       }
     }
   }
@@ -90,7 +90,7 @@ function cmdVerify() {
 
   const fs = require('fs');
   if (!fs.existsSync(logDir)) {
-    console.error(`❌ Log directory not found: ${logDir}`);
+    console.error(`[FAIL] Log directory not found: ${logDir}`);
     process.exit(1);
   }
 
@@ -101,11 +101,11 @@ function cmdVerify() {
   const { valid, errors } = logger.verifyChain();
 
   if (valid) {
-    console.log('✅ Audit chain integrity verified — no tampering detected.');
+    console.log('[OK] Audit chain integrity verified -- no tampering detected.');
   } else {
-    console.error(`❌ CHAIN INTEGRITY FAILURE — ${errors.length} error(s):\n`);
+    console.error(`[FAIL] CHAIN INTEGRITY FAILURE -- ${errors.length} error(s):\n`);
     for (const err of errors) {
-      console.error(`  • ${err}`);
+      console.error(`  * ${err}`);
     }
     process.exit(1);
   }
@@ -136,7 +136,7 @@ switch (command) {
     cmdStats();
     break;
   default:
-    console.log('CloakLLM — AI Compliance Middleware CLI\n');
+    console.log('CloakLLM -- AI Compliance Middleware CLI\n');
     console.log('Commands:');
     console.log('  scan <text>      Scan text for sensitive data');
     console.log('  verify <dir>     Verify audit log integrity');

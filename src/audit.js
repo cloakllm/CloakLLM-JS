@@ -18,7 +18,7 @@ const _PII_FORBIDDEN_KEYS = ['original_value', 'original_text', 'raw_text', 'pla
 // v0.6.3 H9: Prototype-pollution vector keys. When user-controlled JSON flows
 // into object key assignments via `obj[k] = v`, these three names trigger
 // JS engine setters that mutate the prototype chain rather than creating own
-// properties — and the pollution affects every object in the runtime.
+// properties -- and the pollution affects every object in the runtime.
 // Centralized here so all validation sites use the same definition.
 const _PROTOTYPE_POLLUTION_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 function _isPrototypePollutionKey(k) {
@@ -34,7 +34,175 @@ const _ENTRY_ALLOWED_KEYS = new Set([
   'key_id', 'prev_hash', 'entry_hash', 'metadata', 'risk_assessment',
   // v0.6.0 compliance-mode fields
   'compliance_version', 'article_ref', 'retention_hint_days', 'pii_in_log',
+  // v0.7.0 A4a-3 -- Article 4a bias-detection context (only present on bias_* events)
+  'bias_context',
 ]);
+
+// v0.7.0 A4a-3: bias_context schema. See cloakllm-py audit.py for full rationale.
+// Wider per-string cap than `metadata` (necessity_justification is <= 2000 chars
+// by design) -- kept on a per-key allow-list so the looser limit cannot be abused
+// as a generic PII sink.
+const _BIAS_CONTEXT_ALLOWED_KEYS = new Set([
+  'session_id', 'purpose', 'necessity_justification', 'categories_allowed',
+  'max_lifetime_seconds', 'categories_used', 'entity_count', 'exit_reason',
+  'wipe_confirmed', 'entries_processed', 'duration_seconds', 'finding_summary',
+  'bias_metrics',
+]);
+const _BIAS_CONTEXT_STR_MAX_LEN = {
+  session_id: 64,
+  purpose: 500,
+  necessity_justification: 2000,
+  exit_reason: 32,
+  finding_summary: 500,
+};
+const _BIAS_CONTEXT_NUMERIC_FIELDS = new Set([
+  'max_lifetime_seconds', 'entity_count', 'entries_processed', 'duration_seconds',
+]);
+const _BIAS_VALID_EVENT_TYPES = new Set([
+  'bias_session_start', 'bias_pseudonymise', 'bias_finding', 'bias_session_end',
+]);
+
+function _validateBiasContext(ctx) {
+  if (!ctx || typeof ctx !== 'object' || Array.isArray(ctx)) {
+    throw new Error(
+      `AUDIT SCHEMA VIOLATION: bias_context must be a plain object ` +
+      `(got ${Array.isArray(ctx) ? 'array' : typeof ctx}).`
+    );
+  }
+  for (const k of Object.keys(ctx)) {
+    if (typeof k !== 'string') {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: bias_context key ${JSON.stringify(k)} must be a string.`
+      );
+    }
+    if (_isPrototypePollutionKey(k)) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: bias_context key ${JSON.stringify(k)} ` +
+        `is a prototype-pollution vector.`
+      );
+    }
+    if (!_BIAS_CONTEXT_ALLOWED_KEYS.has(k)) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: bias_context contains disallowed key ` +
+        `${JSON.stringify(k)}. Allowed: ` +
+        `${Array.from(_BIAS_CONTEXT_ALLOWED_KEYS).sort().join(', ')}.`
+      );
+    }
+    if (_PII_FORBIDDEN_KEYS.includes(k)) {
+      throw new Error(
+        `COMPLIANCE VIOLATION: bias_context contains forbidden field ` +
+        `${JSON.stringify(k)}. Audit logs must not contain original PII.`
+      );
+    }
+    const v = ctx[k];
+    if (k in _BIAS_CONTEXT_STR_MAX_LEN) {
+      if (typeof v !== 'string') {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: bias_context.${k} must be a string ` +
+          `(got ${typeof v}).`
+        );
+      }
+      const limit = _BIAS_CONTEXT_STR_MAX_LEN[k];
+      if (v.length > limit) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: bias_context.${k} exceeds ${limit} chars ` +
+          `(got ${v.length}).`
+        );
+      }
+    } else if (k === 'categories_allowed') {
+      if (!Array.isArray(v)) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: bias_context.categories_allowed must be ` +
+          `an array (got ${typeof v}).`
+        );
+      }
+      if (v.length > 32) {
+        throw new Error(
+          'AUDIT SCHEMA VIOLATION: bias_context.categories_allowed exceeds 32 entries.'
+        );
+      }
+      for (let i = 0; i < v.length; i++) {
+        if (typeof v[i] !== 'string' || v[i].length > 32) {
+          throw new Error(
+            `AUDIT SCHEMA VIOLATION: bias_context.categories_allowed[${i}] ` +
+            `must be a string <= 32 chars.`
+          );
+        }
+      }
+    } else if (k === 'categories_used') {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: bias_context.categories_used must be a ` +
+          `plain object (got ${Array.isArray(v) ? 'array' : typeof v}).`
+        );
+      }
+      const keys = Object.keys(v);
+      if (keys.length > 64) {
+        throw new Error(
+          'AUDIT SCHEMA VIOLATION: bias_context.categories_used exceeds 64 entries.'
+        );
+      }
+      for (const ck of keys) {
+        if (typeof ck !== 'string' || ck.length > 32) {
+          throw new Error(
+            `AUDIT SCHEMA VIOLATION: bias_context.categories_used key ` +
+            `${JSON.stringify(ck)} must be a string <= 32 chars.`
+          );
+        }
+        if (typeof v[ck] !== 'number' || !Number.isInteger(v[ck])) {
+          throw new Error(
+            `AUDIT SCHEMA VIOLATION: bias_context.categories_used[${ck}] ` +
+            `must be an integer (got ${typeof v[ck]}).`
+          );
+        }
+      }
+    } else if (_BIAS_CONTEXT_NUMERIC_FIELDS.has(k)) {
+      if (typeof v !== 'number' || Number.isNaN(v) || !Number.isFinite(v)) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: bias_context.${k} must be a finite number ` +
+          `(got ${typeof v}).`
+        );
+      }
+    } else if (k === 'wipe_confirmed') {
+      if (typeof v !== 'boolean') {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: bias_context.wipe_confirmed must be a ` +
+          `boolean (got ${typeof v}).`
+        );
+      }
+    } else if (k === 'bias_metrics') {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: bias_context.bias_metrics must be a ` +
+          `plain object (got ${Array.isArray(v) ? 'array' : typeof v}).`
+        );
+      }
+      // v0.7.0 SECURITY-13: per-entry key-count cap (log-volume DoS).
+      // 64 matches the categories_used cap.
+      const bkeys = Object.keys(v);
+      if (bkeys.length > 64) {
+        throw new Error(
+          'AUDIT SCHEMA VIOLATION: bias_context.bias_metrics exceeds 64 keys.'
+        );
+      }
+      for (const bk of bkeys) {
+        if (typeof bk !== 'string') {
+          throw new Error(
+            `AUDIT SCHEMA VIOLATION: bias_metrics key ${JSON.stringify(bk)} ` +
+            `must be a string.`
+          );
+        }
+        if (_isPrototypePollutionKey(bk)) {
+          throw new Error(
+            `AUDIT SCHEMA VIOLATION: bias_metrics key ${JSON.stringify(bk)} ` +
+            `is a prototype-pollution vector.`
+          );
+        }
+        _validateMetadataValue(v[bk], 2, `.bias_metrics.${bk}`);
+      }
+    }
+  }
+}
 
 // Verified against actual code (tokenizer.js:109-120 + Shield.sanitizeBatch
 // adds text_index). 9 keys total.
@@ -167,7 +335,7 @@ function _validateAuditEntrySchema(entryData) {
           `AUDIT SCHEMA VIOLATION: metadata key ${JSON.stringify(k)} must be a string.`
         );
       }
-      // v0.6.3 H9: see _validateMetadataValue for the rationale — reject loudly.
+      // v0.6.3 H9: see _validateMetadataValue for the rationale -- reject loudly.
       if (_isPrototypePollutionKey(k)) {
         throw new Error(
           `AUDIT SCHEMA VIOLATION: metadata key ${JSON.stringify(k)} is a ` +
@@ -176,6 +344,23 @@ function _validateAuditEntrySchema(entryData) {
         );
       }
       _validateMetadataValue(metadata[k], 1, `.${k}`);
+    }
+  }
+
+  // v0.7.0 A4a-3: bias_context (Article 4a bias-detection events)
+  const biasContext = entryData.bias_context;
+  if (biasContext !== null && biasContext !== undefined) {
+    _validateBiasContext(biasContext);
+    // Event_type / bias_context coupling: arbitrary events can't smuggle
+    // bias-detection metadata. Auditors must be able to trust that any
+    // entry carrying bias_context IS an Article 4a workflow event.
+    const ev = entryData.event_type;
+    if (!_BIAS_VALID_EVENT_TYPES.has(ev)) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: bias_context requires event_type in ` +
+        `${Array.from(_BIAS_VALID_EVENT_TYPES).sort().join(', ')} ` +
+        `(got ${JSON.stringify(ev)}).`
+      );
     }
   }
 }
@@ -208,7 +393,7 @@ class AuditLogger {
    * v0.6.3 H4: Scan backward through log files looking for the last
    * well-formed entry (with both `seq` and `entry_hash`). Skips corrupt
    * trailing lines instead of treating them as evidence the whole file
-   * is unusable — that previously stranded earlier valid entries when
+   * is unusable -- that previously stranded earlier valid entries when
    * a write was partial at crash time.
    *
    * @param {string[]} logFiles
@@ -231,10 +416,10 @@ class AuditLogger {
             return entry;
           }
         } catch {
-          // corrupt line — keep scanning backward in this file
+          // corrupt line -- keep scanning backward in this file
         }
       }
-      // file had no valid entries — try next-older
+      // file had no valid entries -- try next-older
     }
     return null;
   }
@@ -244,7 +429,7 @@ class AuditLogger {
 
     // v0.6.3 G7: create the audit dir mode 0o700 so other system users
     // can't list audit log filenames. On Windows the mode is largely
-    // ignored — operators must rely on NTFS ACLs.
+    // ignored -- operators must rely on NTFS ACLs.
     fs.mkdirSync(this._logDir, { recursive: true, mode: 0o700 });
     // If the dir already existed with looser permissions, tighten it.
     // POSIX-only; Windows chmod is a no-op for these bits.
@@ -277,7 +462,7 @@ class AuditLogger {
         }
       }
     } catch {
-      // best-effort — if we can't probe, fall through; next write may concat.
+      // best-effort -- if we can't probe, fall through; next write may concat.
     }
     const lastEntry = this._scanForLastValidEntry(logFiles);
     if (lastEntry !== null) {
@@ -285,13 +470,13 @@ class AuditLogger {
       this._prevHash = lastEntry.entry_hash;
     } else if (logFiles.length > 0 && this.config.auditStrictChain) {
       // v0.6.3 H4: refuse silent GENESIS restart when files exist but
-      // recovery returned nothing — that surface lets an attacker mask
+      // recovery returned nothing -- that surface lets an attacker mask
       // tampering as a normal restart.
       throw new Error(
         `CloakLLM audit chain recovery failed: log dir '${this._logDir}' ` +
         `contains ${logFiles.length} file(s) but none have a recoverable ` +
         `trailing entry. Refusing to silently restart from GENESIS ` +
-        `(auditStrictChain=true). Inspect the files for corruption — a ` +
+        `(auditStrictChain=true). Inspect the files for corruption -- a ` +
         `silent restart would let an attacker mask tampering as a restart.`
       );
     }
@@ -354,6 +539,7 @@ class AuditLogger {
     certificateHash = null,
     keyId = null,
     riskAssessment = null,
+    biasContext = null,
   }) {
     if (!this.config.auditEnabled) return null;
 
@@ -384,12 +570,19 @@ class AuditLogger {
       prev_hash: this._prevHash,
       metadata,
       risk_assessment: riskAssessment,
+      // v0.7.0 A4a-3: bias_context -- only present on bias_* events
+      bias_context: biasContext,
     };
 
-    // Compliance mode injection (v0.6.0) — fields are part of the hash chain.
+    // Compliance mode injection (v0.6.0) -- fields are part of the hash chain.
     if (this.config.complianceMode === 'eu_ai_act_article12') {
       entryData.compliance_version = 'eu_ai_act_article12_v1';
-      entryData.article_ref = ['EU_AI_Act_Art_12', 'EU_AI_Act_Art_19'];
+      const articleRefs = ['EU_AI_Act_Art_12', 'EU_AI_Act_Art_19'];
+      // v0.7.0 A4a-3: bias events additionally satisfy Article 4a.
+      if (_BIAS_VALID_EVENT_TYPES.has(eventType)) {
+        articleRefs.push('EU_AI_Act_Art_4a');
+      }
+      entryData.article_ref = articleRefs;
       entryData.retention_hint_days = this.config.retentionHintDays;
       entryData.pii_in_log = false;
     }
@@ -416,7 +609,7 @@ class AuditLogger {
     // v0.6.3 G7: ensure new audit logs are created with mode 0o600 so other
     // system users can't read entity hashes / token counts / categories.
     // appendFileSync's `mode` option is honoured ONLY when the file is being
-    // CREATED — existing files keep their current mode. To tighten existing
+    // CREATED -- existing files keep their current mode. To tighten existing
     // audit files we'd need to chmod every write, which is wasteful; we
     // instead chmod once after the first write that creates the file.
     const fileExisted = fs.existsSync(logFile);
@@ -444,7 +637,7 @@ class AuditLogger {
    *   using the v0.6.0-compatible canonicalizer (`ensure_ascii=true` /
    *   `\uXXXX`-escaped non-ASCII). Required to verify audit chains that were
    *   originally written by **Python v0.5.x or v0.6.0** and contain non-ASCII
-   *   characters (names, addresses, etc.) — Python escaped them, JS preserved
+   *   characters (names, addresses, etc.) -- Python escaped them, JS preserved
    *   UTF-8, so the canonical bytes diverged. v0.6.1+ chains use a unified
    *   canonicalizer and verify cross-SDK without this flag. **Sunset in v0.7.0
    *   with a deprecation warning whenever the flag is set.**
@@ -522,7 +715,7 @@ class AuditLogger {
         try {
           entry = JSON.parse(lines[i]);
         } catch {
-          errors.push(`${fname}:${i + 1} — Invalid JSON`);
+          errors.push(`${fname}:${i + 1} -- Invalid JSON`);
           continue;
         }
 
@@ -533,7 +726,7 @@ class AuditLogger {
         // Check chain link
         if (entry.prev_hash !== prevHash) {
           errors.push(
-            `${fname}:${i + 1} seq=${entry.seq} — ` +
+            `${fname}:${i + 1} seq=${entry.seq} -- ` +
             `Chain broken: expected prev_hash=${prevHash.slice(0, 16)}..., ` +
             `got ${(entry.prev_hash || 'MISSING').slice(0, 16)}...`
           );
@@ -552,7 +745,7 @@ class AuditLogger {
             if (entry.pii_in_log === true) {
               piiInLogs = true;
               errors.push(
-                `${fname}:${i + 1} seq=${entry.seq} — ` +
+                `${fname}:${i + 1} seq=${entry.seq} -- ` +
                 `COMPLIANCE VIOLATION: pii_in_log=true`
               );
             }
@@ -570,7 +763,7 @@ class AuditLogger {
         delete entry.entry_hash;
         const recomputed = AuditLogger.computeHash(entry, { legacyCanonical });
         // v0.6.4 G8: timing-safe comparison via crypto.timingSafeEqual.
-        // String !== short-circuits at first mismatched char — an attacker
+        // String !== short-circuits at first mismatched char -- an attacker
         // with many verifyChain calls could in principle infer hash bytes
         // by timing. Length pre-check is required (timingSafeEqual throws
         // on length mismatch) and is itself constant-time on length only.
@@ -587,7 +780,7 @@ class AuditLogger {
         }
         if (tampered) {
           errors.push(
-            `${fname}:${i + 1} seq=${entry.seq} — ` +
+            `${fname}:${i + 1} seq=${entry.seq} -- ` +
             `Entry tampered: stored_hash=${(storedHash || '').slice(0, 16)}..., ` +
             `recomputed=${recomputed.slice(0, 16)}...`
           );

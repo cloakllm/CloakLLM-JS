@@ -449,6 +449,13 @@ export const MAX_TOKEN_LENGTH: number;
 /** Set of all built-in category names. */
 export const BUILTIN_CATEGORIES: Set<string>;
 
+/**
+ * Special-category (GDPR Article 9 / EU AI Act Article 4a) categories.
+ * Deliberately NOT auto-detected by regex; introduced via
+ * `BiasDetectionSession` or opt-in LLM detection.
+ */
+export const SPECIAL_CATEGORY_CATEGORIES: Set<string>;
+
 /** Return true if the string is a valid CloakLLM token. */
 export function validateToken(token: string): boolean;
 
@@ -490,4 +497,88 @@ export class LlmBackend extends DetectorBackend {
   constructor(config: ShieldConfig);
   get name(): 'llm';
   addExcludedCategories(categories: string[]): void;
+}
+
+// --- v0.7.0 A4a: Bias Detection (Article 4a) ---
+
+/** Base class for all Article 4a bias-detection errors. */
+export class BiasDetectionError extends Error {}
+
+/**
+ * Raised when a pseudonymise() call requests a category not in the session's
+ * categoriesAllowed set. Article 4a safeguard #4 enforcement.
+ */
+export class BiasDetectionScopeError extends BiasDetectionError {}
+
+/**
+ * Raised when an operation runs after maxLifetimeSeconds has elapsed.
+ * The session is force-ended and wiped before the error is thrown.
+ */
+export class BiasDetectionTimeoutError extends BiasDetectionError {}
+
+/**
+ * Raised when an operation is attempted on a session in the wrong state
+ * (used before .start(), or after .end()).
+ */
+export class BiasDetectionStateError extends BiasDetectionError {}
+
+export interface BiasDetectionSessionOptions {
+  shield: Shield;
+  purpose: string;
+  necessityJustification: string;
+  categoriesAllowed: Iterable<string>;
+  maxLifetimeSeconds: number;
+}
+
+export interface BiasDetectionFindingOptions {
+  findingSummary: string;
+  biasMetrics?: Record<string, number | string | boolean | null>;
+}
+
+/**
+ * Article 4a-compliant bias-detection workflow over a Shield. Sibling
+ * class via composition — does NOT subclass Shield.
+ *
+ * Requires shield.config.complianceMode === 'eu_ai_act_article12'.
+ *
+ * Use the static `.run()` helper for guaranteed cleanup, or call `.start()`
+ * and `.end()` explicitly inside a try/finally.
+ */
+export class BiasDetectionSession {
+  constructor(options: BiasDetectionSessionOptions);
+
+  readonly sessionId: string;
+  readonly purpose: string;
+  readonly necessityJustification: string;
+  readonly categoriesAllowed: Set<string>;
+  readonly maxLifetimeSeconds: number;
+  readonly closed: boolean;
+  readonly entriesProcessed: number;
+
+  /** Mark the session as entered and log bias_session_start. Idempotent within a single session. */
+  start(): void;
+
+  /**
+   * Run callback with a fresh session; guarantees .end() runs on success or throw.
+   * Mirrors Python's `with BiasDetectionSession(...) as session:` block.
+   */
+  static run<T>(
+    options: BiasDetectionSessionOptions,
+    fn: (session: BiasDetectionSession) => T | Promise<T>,
+  ): Promise<T>;
+
+  /**
+   * Pseudonymise text using caller-declared special-category spans.
+   * @returns [pseudonymisedText, categoriesUsedCounts]
+   */
+  pseudonymise(
+    text: string,
+    options: { forceCategories: Array<[number, number, string]> },
+  ): [string, Record<string, number>];
+
+  /** Record a bias-detection finding (logs bias_finding event). */
+  recordFinding(options: BiasDetectionFindingOptions): void;
+
+  /** Explicit close. Idempotent. Logs bias_session_end and wipes token map. */
+  end(): void;
 }

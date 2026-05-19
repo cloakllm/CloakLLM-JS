@@ -43,14 +43,15 @@ function _encodeNumber(n) {
   if (!Number.isFinite(n)) {
     throw new Error(`canonicalJson: non-finite number rejected (${n})`);
   }
-  // JSON.stringify on a finite number already produces the canonical form
-  // ("1", "1.5", "-0.001", "1e+30" for very large). Python `json.dumps(1.0)`
-  // emits "1.0" while JS emits "1" — but our audit/cert payloads only emit
-  // floats via `round(x, 2)` for latency_ms etc., which Python serializes as
-  // "0.5" not "0.50", and integer-valued floats are not present. The only
-  // place Python might emit `1.0` is `confidence`, which is bounded
-  // [0, 1] and stored as float64 — it is also not used in cert hashing.
-  // Treat this as an acceptable parity gap until v0.7 audits this corner.
+  // **Cross-SDK invariant (v0.7.0 A4a-7):** Python's `json.dumps(0.0)` emits
+  // "0.0" while JS's `JSON.stringify(0.0)` emits "0" — same value, divergent
+  // canonical bytes. Producers writing audit-log entries from PYTHON must
+  // therefore pass integer 0 (not float 0.0) for any numeric field that may
+  // legitimately be zero; otherwise the resulting Python-written chain will
+  // fail JS `verifyChain` recomputation on that entry. The Article 4a
+  // bias-detection event sites in `cloakllm/bias_detection.py` follow this
+  // pattern: `latency_ms=0` not `0.0`. Same goes for any future numeric
+  // field that may have an integer-valued float.
   return JSON.stringify(n);
 }
 

@@ -14,6 +14,8 @@ const {
   NER_CATEGORIES,
   REGEX_CATEGORIES,
   RESERVED_CATEGORIES,
+  // v0.7.0 A4a-2 — special-category PII (GDPR Art. 9 / EU AI Act Art. 4a)
+  SPECIAL_CATEGORY_CATEGORIES,
   isRedactedToken,
   parseToken,
   validateCategoryName,
@@ -148,9 +150,11 @@ describe('validateCategoryName', () => {
 
 describe('Category Registry', () => {
   it('BUILTIN_CATEGORIES is the union of all sets', () => {
+    // v0.7.0: union now includes SPECIAL_CATEGORY_CATEGORIES (Art. 4a).
     const union = new Set([
       ...REGEX_CATEGORIES, ...NER_CATEGORIES,
-      ...LLM_CATEGORIES, ...LOCALE_CATEGORIES,
+      ...LLM_CATEGORIES, ...SPECIAL_CATEGORY_CATEGORIES,
+      ...LOCALE_CATEGORIES,
     ]);
     assert.deepStrictEqual(BUILTIN_CATEGORIES, union);
   });

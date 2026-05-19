@@ -35,6 +35,7 @@ const {
   validateCategoryName,
   isRedactedToken,
   BUILTIN_CATEGORIES,
+  SPECIAL_CATEGORY_CATEGORIES,
   CLOAKLLM_TOKEN_PATTERN,
   MAX_TOKEN_LENGTH,
 } = require('./token-spec');
@@ -44,6 +45,13 @@ const {
   NerBackend,
   LlmBackend,
 } = require('./backends');
+const {
+  BiasDetectionSession,
+  BiasDetectionError,
+  BiasDetectionScopeError,
+  BiasDetectionTimeoutError,
+  BiasDetectionStateError,
+} = require('./bias-detection');
 
 module.exports = {
   Shield,
@@ -68,10 +76,17 @@ module.exports = {
   validateCategoryName,
   isRedactedToken,
   BUILTIN_CATEGORIES,
+  SPECIAL_CATEGORY_CATEGORIES,
   CLOAKLLM_TOKEN_PATTERN,
   MAX_TOKEN_LENGTH,
   DetectorBackend,
   RegexBackend,
   NerBackend,
   LlmBackend,
+  // v0.7.0 A4a — Article 4a bias-detection workflow
+  BiasDetectionSession,
+  BiasDetectionError,
+  BiasDetectionScopeError,
+  BiasDetectionTimeoutError,
+  BiasDetectionStateError,
 };

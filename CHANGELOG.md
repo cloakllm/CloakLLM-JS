@@ -5,6 +5,29 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-05-19
+
+**Headline: EU AI Act Article 4a Bias Detection Workflow.**
+
+Mirror of cloakllm-py 0.7.0. Article 4a (May 7 2026 Digital Omnibus) permits processing GDPR Article 9 special-category data for bias detection / correction in AI systems under six safeguards; `BiasDetectionSession` operationalises all six.
+
+### Added
+
+- **`BiasDetectionSession`** (require: `purpose`, `necessityJustification` ≤ 2000 chars, `categoriesAllowed` subset of `SPECIAL_CATEGORY_CATEGORIES`, `maxLifetimeSeconds` 1..604800). No language-level `with` block in JS — use the static `BiasDetectionSession.run({...}, async (session) => {...})` helper which guarantees `.end()` runs on success or throw, or `.start()` / `.end()` explicitly inside try/finally.
+- **8 new special-category PII categories** in `SPECIAL_CATEGORY_CATEGORIES` and `BUILTIN_CATEGORIES`: `RACE`, `ETHNICITY`, `RELIGION`, `POLITICAL_OPINION`, `HEALTH_BIOMETRIC`, `SEXUAL_ORIENTATION`, `TRADE_UNION`, `GENETIC`. Not auto-detected — introduced only via `session.pseudonymise(text, { forceCategories: [[start, end, category], ...] })`.
+- **4 new audit event types** in the hash chain: `bias_session_start`, `bias_pseudonymise`, `bias_finding`, `bias_session_end`. Strict-validated `bias_context` field on each (per-key allow-list, per-key length caps, PII-forbidden-key list). When `complianceMode: 'eu_ai_act_article12'` is set, `EU_AI_Act_Art_4a` is appended to `article_ref`.
+- **Typed exceptions**: `BiasDetectionError`, `BiasDetectionScopeError`, `BiasDetectionTimeoutError`, `BiasDetectionStateError`. All extend `Error`.
+- **Full TypeScript declarations** for the new API in `src/index.d.ts`.
+- **Cross-SDK fixture `audit_chain_bias_js.jsonl`** + I7 test that the chain Python writes verifies under JS `verifyChain` and vice versa.
+
+### Notes
+
+- `canonicalJson` documents the cross-SDK numeric invariant: Python's `json.dumps(0.0)` → `"0.0"`, JS's `JSON.stringify(0.0)` → `"0"`. New Python audit-log call sites must pass int 0 for zero-valued numeric fields. JS handles this automatically.
+
+### Test suite growth
+
+488 → 536 tests (added bias-detection suite + cross-SDK bias-chain verification).
+
 ## [0.6.5] - 2026-04-24
 
 Drop-in safe from v0.6.4. Mirror of cloakllm-py 0.6.5 + cloakllm-mcp 0.6.5
