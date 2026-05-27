@@ -36,6 +36,9 @@ const _ENTRY_ALLOWED_KEYS = new Set([
   'compliance_version', 'article_ref', 'retention_hint_days', 'pii_in_log',
   // v0.7.0 A4a-3 -- Article 4a bias-detection context (only present on bias_* events)
   'bias_context',
+  // v0.7.1 C7.1-1 / C7.1-2 -- Compliance-schema extensions
+  'decision_id',
+  'system_version_pin',
 ]);
 
 // v0.7.0 A4a-3: bias_context schema. See cloakllm-py audit.py for full rationale.
@@ -347,6 +350,49 @@ function _validateAuditEntrySchema(entryData) {
     }
   }
 
+  // v0.7.1 C7.1-1: decision_id -- per-inference audit anchor. Loose validation;
+  // accepts caller-supplied IDs from upstream systems too (UUID, integers,
+  // opaque tokens). Rejects control bytes + bidi-formatting (SECURITY-13).
+  const decisionId = entryData.decision_id;
+  if (decisionId !== null && decisionId !== undefined) {
+    if (typeof decisionId !== 'string') {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: decision_id must be a string ` +
+        `(got ${typeof decisionId}).`
+      );
+    }
+    if (decisionId.length < 1 || decisionId.length > 64) {
+      throw new Error(
+        'AUDIT SCHEMA VIOLATION: decision_id must be 1..64 chars.'
+      );
+    }
+    for (let i = 0; i < decisionId.length; i++) {
+      const c = decisionId.charCodeAt(i);
+      if (c < 0x20 || c > 0x7E) {
+        throw new Error(
+          'AUDIT SCHEMA VIOLATION: decision_id contains a control byte ' +
+          'or non-ASCII-printable character.'
+        );
+      }
+    }
+  }
+
+  // v0.7.1 C7.1-2: system_version_pin -- composed model@deployment/instruction
+  const systemVersionPin = entryData.system_version_pin;
+  if (systemVersionPin !== null && systemVersionPin !== undefined) {
+    if (typeof systemVersionPin !== 'string') {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: system_version_pin must be a string ` +
+        `(got ${typeof systemVersionPin}).`
+      );
+    }
+    if (systemVersionPin.length > 256) {
+      throw new Error(
+        'AUDIT SCHEMA VIOLATION: system_version_pin exceeds 256 chars.'
+      );
+    }
+  }
+
   // v0.7.0 A4a-3: bias_context (Article 4a bias-detection events)
   const biasContext = entryData.bias_context;
   if (biasContext !== null && biasContext !== undefined) {
@@ -540,6 +586,8 @@ class AuditLogger {
     keyId = null,
     riskAssessment = null,
     biasContext = null,
+    decisionId = null,
+    systemVersionPin = null,
   }) {
     if (!this.config.auditEnabled) return null;
 
@@ -572,6 +620,9 @@ class AuditLogger {
       risk_assessment: riskAssessment,
       // v0.7.0 A4a-3: bias_context -- only present on bias_* events
       bias_context: biasContext,
+      // v0.7.1 C7.1-1 / C7.1-2: compliance-schema extensions
+      decision_id: decisionId,
+      system_version_pin: systemVersionPin,
     };
 
     // Compliance mode injection (v0.6.0) -- fields are part of the hash chain.

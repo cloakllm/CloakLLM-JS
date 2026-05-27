@@ -186,24 +186,65 @@ function _isPrivateIpv6(ip) {
 }
 
 /**
- * v0.6.3 H2: Always-deny IPv6 ranges (multicast, unspecified).
+ * v0.7.1 C7.1-3: normalize an IPv6 literal into 8 fully-expanded 4-digit hex
+ * groups joined by colons. Handles the three forms an attacker might use to
+ * smuggle the AWS IPv6 IMDS address past a naive prefix check:
+ *   `fd00:ec2::254`          (compressed `::`)
+ *   `fd00:0ec2::254`         (leading-zero variant)
+ *   `fd00:ec2:0:0:0:0:0:254` (fully expanded)
+ * All three normalize to `fd00:0ec2:0000:0000:0000:0000:0000:0254`.
  *
- * KNOWN GAP: AWS uses `fd00:ec2::254` for IPv6 IMDS, which lives inside the
- * `fc00::/7` ULA range that `_isPrivateIpv6` permits. The Python SDK closes
- * this with `ipaddress.ip_network("fd00:ec2::/64")`. JS would need an IPv6
- * normalizer to handle the multiple textual forms (`fd00:ec2::254`,
- * `fd00:0ec2::254`, `fd00:ec2:0:0:0:0:0:254`, etc.) — punted to v0.7.0.
+ * Returns null on malformed input; the caller treats null as "not IPv6, no
+ * decision here" and falls back to the other allow/deny passes.
+ */
+function _normalizeIpv6(ip) {
+  if (typeof ip !== 'string') return null;
+  const stripped = ip.replace(/^\[|\]$/g, '');
+  if (!stripped.includes(':')) return null;
+  // Reject anything other than hex + colons (IPv4-mapped handled separately).
+  if (!/^[0-9a-fA-F:]+$/.test(stripped)) return null;
+  // Expand the `::` shorthand, then pad each group to 4 hex digits.
+  const doubleColonCount = (stripped.match(/::/g) || []).length;
+  if (doubleColonCount > 1) return null;  // RFC 4291: at most one ::
+  let groups;
+  if (doubleColonCount === 1) {
+    const [left, right] = stripped.split('::');
+    const leftGroups = left ? left.split(':') : [];
+    const rightGroups = right ? right.split(':') : [];
+    const missing = 8 - leftGroups.length - rightGroups.length;
+    if (missing < 0) return null;
+    groups = [...leftGroups, ...Array(missing).fill('0'), ...rightGroups];
+  } else {
+    groups = stripped.split(':');
+  }
+  if (groups.length !== 8) return null;
+  // Each group must be 1..4 hex chars
+  for (const g of groups) {
+    if (g.length === 0 || g.length > 4) return null;
+  }
+  return groups.map(g => g.padStart(4, '0').toLowerCase()).join(':');
+}
+
+/**
+ * v0.6.3 H2 + v0.7.1 C7.1-3: Always-deny IPv6 ranges.
+ *   - `::`     unspecified
+ *   - `ff*`    multicast
+ *   - `fd00:ec2::/64`  AWS IPv6 IMDS (lives inside fc00::/7 ULA which is
+ *     otherwise allowed for local Ollama-on-tailscale-or-similar use)
  *
- * Practical exposure: an attacker would need to either (a) trick the operator
- * into pasting a literal `[fd00:ec2::254]` into config, or (b) control the
- * DNS for a hostname the operator configured. Both are operator-trust failures
- * — same residual gap class as hostname rebinding.
+ * The AWS IPv6 IMDS check was a known gap from v0.6.3 (textual-form normalizer
+ * needed). v0.7.1 C7.1-3 closes it via `_normalizeIpv6` above.
  */
 function _isAlwaysDenyIpv6(ip) {
   if (typeof ip !== 'string') return false;
   const lower = ip.replace(/^\[|\]$/g, '').toLowerCase();
   if (lower === '::') return true;                             // unspecified
   if (lower.startsWith('ff')) return true;                     // ff00::/8 multicast
+  // v0.7.1 C7.1-3: AWS IPv6 IMDS is `fd00:ec2::/64`. Any address whose
+  // first two NORMALIZED groups are `fd00` + `0ec2`. Catches the three
+  // textual forms enumerated in _normalizeIpv6's docstring.
+  const normalized = _normalizeIpv6(ip);
+  if (normalized && normalized.startsWith('fd00:0ec2:')) return true;
   return false;
 }
 

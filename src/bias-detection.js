@@ -64,7 +64,7 @@ const FORCE_CATEGORIES_MAX = 1024;
 // viewers, enabling auditor visual-spoofing on otherwise-truthful entries.
 // Codepoints: U+202A LRE, U+202B RLE, U+202C PDF, U+202D LRO, U+202E RLO,
 // U+2066 LRI, U+2067 RLI, U+2068 FSI, U+2069 PDI.
-const BIDI_FORMATTING_RE = /[‪-‮⁦-⁩]/;
+const BIDI_FORMATTING_RE = /[\u202a-\u202e\u2066-\u2069]/;
 
 function rejectBidiFormatting(value, fieldName) {
   const m = BIDI_FORMATTING_RE.exec(value);
