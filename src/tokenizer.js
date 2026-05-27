@@ -44,6 +44,10 @@ class TokenMap {
     this.merkleTree = null;
     /** @type {Object|null} Context risk assessment */
     this.riskAssessment = null;
+    /** @type {string|null} v0.7.1 C7.1-1: per-inference audit anchor
+     *  (ULID by default). Set by Shield on sanitize; read by Shield on
+     *  the matching desanitize so both audit entries share the ID. */
+    this.decisionId = null;
   }
 
   /**

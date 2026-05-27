@@ -5,6 +5,27 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-05-19
+
+Mirror of cloakllm-py 0.7.1. Drop-in safe from v0.7.0. All v0.7.0 audit chains verify under v0.7.1.
+
+### Added
+
+- **`AuditEntry.decision_id`** (optional, default `null`) -- per-inference audit anchor. ULID by default (auto-generated via `src/_ulid.js`, zero new deps). New `decisionId` option on `shield.sanitize/desanitize/sanitizeBatch/desanitizeBatch`. Propagates from sanitize to the matching desanitize via `tokenMap.decisionId`. C7.1-1.
+- **`AuditEntry.system_version_pin`** (optional, default `null`) -- composed `<model>@<deploymentVersion>/<instructionVersion>` string. Deployer supplies `deploymentVersion` + `instructionVersion` via `ShieldConfig`. All three components required. B3 validator caps at 256 chars. C7.1-2.
+
+### Security
+
+- **AWS IPv6 IMDS gap closed (`_normalizeIpv6` + `fd00:ec2::/64` deny).** The v0.6.3 JS SSRF defense had a known residual: `fd00:ec2::254` lives inside the `fc00::/7` ULA range that `_isPrivateIpv6` permits. v0.7.1 adds an IPv6 normalizer that handles the three textual forms (compressed `::`, leading-zero `0ec2`, fully-expanded `0:0:0:0:0:0:254`) and now denies any address whose first two normalized groups are `fd00:0ec2:`. Cross-SDK parity with Python's v0.6.3 close. C7.1-3.
+
+### Tests
+
+- 538 -> 574 tests (+36): consolidated `test/test_v071_extensions.js` covering ULID generator (12 incl. parameterized accept/reject), decision_id end-to-end (8), system_version_pin (5), IPv6 SSRF defense incl. AWS IMDS deny (11). Cross-SDK fixtures regenerated.
+
+### Compatibility
+
+- **Backward compat:** all v0.7.0 audit chains verify under v0.7.1.
+
 ## [0.7.0] - 2026-05-19
 
 **Headline: EU AI Act Article 4a Bias Detection Workflow.**

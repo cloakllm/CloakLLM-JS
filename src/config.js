@@ -162,6 +162,18 @@ class ShieldConfig {
     if (this.retentionHintDays < 1) {
       throw new Error(`retentionHintDays must be >= 1 (got ${this.retentionHintDays}).`);
     }
+
+    // --- v0.7.1 C7.1-2: system_version_pin components ---
+    // Deployer-supplied components composed into AuditEntry.system_version_pin
+    // at write time: "<model>@<deploymentVersion>/<instructionVersion>".
+    // All three required for the pin to be emitted; otherwise null.
+    /** @type {string|null} */
+    this.deploymentVersion = options.deploymentVersion
+      ?? process.env.CLOAKLLM_DEPLOYMENT_VERSION ?? null;
+    /** @type {string|null} */
+    this.instructionVersion = options.instructionVersion
+      ?? process.env.CLOAKLLM_INSTRUCTION_VERSION ?? null;
+
     // Note: KMS-based key providers are Python-only for v0.6. JS uses local Ed25519 keys.
 
     // --- Input length cap (v0.6.1 H1.4) ---

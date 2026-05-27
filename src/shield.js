@@ -21,7 +21,23 @@ const { Tokenizer, TokenMap } = require('./tokenizer');
 const { AuditLogger } = require('./audit');
 const { DeploymentKeyPair, SanitizationCertificate, MerkleTree } = require('./attestation');
 const { ContextAnalyzer } = require('./context-analyzer');
+const { generateUlid } = require('./_ulid');
 const { version: CLOAKLLM_VERSION } = require('../package.json');
+
+/**
+ * v0.7.1 C7.1-2: compose system_version_pin from three components.
+ * Returns the composed string only when ALL three components are present
+ * (no partial pins). Mirror of cloakllm-py shield.py.
+ *
+ * @param {string|null} model
+ * @param {string|null} deploymentVersion
+ * @param {string|null} instructionVersion
+ * @returns {string|null}
+ */
+function _composeSystemVersionPin(model, deploymentVersion, instructionVersion) {
+  if (!model || !deploymentVersion || !instructionVersion) return null;
+  return `${model}@${deploymentVersion}/${instructionVersion}`;
+}
 
 class Shield {
   /**
@@ -131,7 +147,7 @@ class Shield {
     }
   }
 
-  sanitize(text, { tokenMap = null, model = null, provider = null, metadata = {} } = {}) {
+  sanitize(text, { tokenMap = null, model = null, provider = null, metadata = {}, decisionId = null } = {}) {
     this._checkInputLength(text);
     const startTime = performance.now();
 
@@ -147,6 +163,10 @@ class Shield {
         entityHashKey: this.config.entityHashKey,
       });
     }
+
+    // v0.7.1 C7.1-1: decision_id resolution + propagation via token_map.
+    const resolvedDecisionId = decisionId || generateUlid();
+    tokenMap.decisionId = resolvedDecisionId;
 
     t0 = performance.now();
     const [sanitized, map] = this.tokenizer.tokenize(text, detections, tokenMap);
@@ -220,6 +240,11 @@ class Shield {
       certificateHash: certHash,
       keyId: certKeyId,
       riskAssessment,
+      // v0.7.1 C7.1-1 / C7.1-2
+      decisionId: resolvedDecisionId,
+      systemVersionPin: _composeSystemVersionPin(
+        model, this.config.deploymentVersion, this.config.instructionVersion,
+      ),
     });
 
     return [sanitized, map];
@@ -232,7 +257,7 @@ class Shield {
    * @param {Object} [options]
    * @returns {string}
    */
-  desanitize(text, tokenMap, { model = null, provider = null, metadata = {} } = {}) {
+  desanitize(text, tokenMap, { model = null, provider = null, metadata = {}, decisionId = null } = {}) {
     const startTime = performance.now();
 
     // v0.6.3 H3: Pre-compute which tokens actually appear in `text`. Logged
@@ -283,6 +308,10 @@ class Shield {
     // The `result` (restored PII) is NEVER hashed and NEVER in the log.
     // Pre-v0.6.3 chains: shield.verifyAudit({ legacyDesanitizeHash: true }).
     // Sunset in v0.7.0.
+    // v0.7.1 C7.1-1: decision_id propagation. Caller override wins; otherwise
+    // inherit from token_map (set during the matching sanitize).
+    const resolvedDecisionId = decisionId || tokenMap.decisionId || null;
+
     this.audit.log({
       eventType: 'desanitize',
       originalText: text,
@@ -297,6 +326,11 @@ class Shield {
       entityDetails: presentEntityDetails,  // H3
       timing,
       metadata,
+      // v0.7.1 C7.1-1 / C7.1-2
+      decisionId: resolvedDecisionId,
+      systemVersionPin: _composeSystemVersionPin(
+        model, this.config.deploymentVersion, this.config.instructionVersion,
+      ),
     });
 
     return result;
@@ -312,7 +346,7 @@ class Shield {
    * @param {Object} [options.metadata]
    * @returns {[string[], TokenMap]}
    */
-  sanitizeBatch(texts, { tokenMap = null, model = null, provider = null, metadata = {} } = {}) {
+  sanitizeBatch(texts, { tokenMap = null, model = null, provider = null, metadata = {}, decisionId = null } = {}) {
     // v0.6.1 H1.4 — per-text length cap
     for (let i = 0; i < texts.length; i++) {
       try {
@@ -330,6 +364,10 @@ class Shield {
         entityHashKey: this.config.entityHashKey,
       });
     }
+
+    // v0.7.1 C7.1-1: decision_id resolution + propagation.
+    const resolvedDecisionId = decisionId || generateUlid();
+    tokenMap.decisionId = resolvedDecisionId;
 
     const sanitizedTexts = [];
     const allEntityDetails = [];
@@ -460,6 +498,11 @@ class Shield {
       metadata: auditMetadata,
       certificateHash: certHash,
       keyId: certKeyId,
+      // v0.7.1 C7.1-1 / C7.1-2
+      decisionId: resolvedDecisionId,
+      systemVersionPin: _composeSystemVersionPin(
+        model, this.config.deploymentVersion, this.config.instructionVersion,
+      ),
     });
 
     return [sanitizedTexts, tokenMap];
@@ -472,7 +515,7 @@ class Shield {
    * @param {Object} [options]
    * @returns {string[]}
    */
-  desanitizeBatch(texts, tokenMap, { model = null, provider = null, metadata = {} } = {}) {
+  desanitizeBatch(texts, tokenMap, { model = null, provider = null, metadata = {}, decisionId = null } = {}) {
     const startTime = performance.now();
 
     // v0.6.3 H3: union of tokens present across the batch (mirrors Python).
@@ -503,6 +546,9 @@ class Shield {
     const presentEntityDetails = (tokenMap.entityDetails || [])
       .filter(ed => presentTokenSet.has(ed.token));
 
+    // v0.7.1 C7.1-1: decision_id propagation (override -> token_map -> null).
+    const resolvedDecisionId = decisionId || tokenMap.decisionId || null;
+
     this.audit.log({
       eventType: 'desanitize_batch',
       originalText: '',
@@ -517,6 +563,11 @@ class Shield {
       entityDetails: presentEntityDetails,  // H3
       timing,
       metadata,
+      // v0.7.1 C7.1-1 / C7.1-2
+      decisionId: resolvedDecisionId,
+      systemVersionPin: _composeSystemVersionPin(
+        model, this.config.deploymentVersion, this.config.instructionVersion,
+      ),
     });
 
     return results;
