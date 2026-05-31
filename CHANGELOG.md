@@ -5,6 +5,10 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-05-31
+
+**No JS-side changes.** Version bump for lockstep with cloakllm-py 0.8.2 (Ed25519-backend-missing hardening, Python-only). JS uses Node's built-in `crypto` module for Ed25519 — zero runtime dependencies, no install footgun. The v0.8.1 KeyManifest surface in JS is unaffected.
+
 ## [0.8.1] - 2026-05-31
 
 Mirror of cloakllm-py 0.8.1. **Headline: KeyManifest -- externally-verifiable key provenance.** Drop-in safe from v0.8.0.
