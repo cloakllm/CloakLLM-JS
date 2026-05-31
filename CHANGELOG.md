@@ -5,6 +5,29 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-05-31
+
+Mirror of cloakllm-py 0.8.0. **Headline: `shield.generateComplianceReport()` -- end-to-end EU AI Act audit reports** (JSON + Markdown; PDF is Python-only because `reportlab` is a Python-native lib). Drop-in safe from v0.7.1. All v0.7.x audit chains verify under v0.8.0.
+
+### Added
+
+- **`shield.generateComplianceReport({periodFrom, periodTo, articles, format, outPath, includeDecisions})`** -- new method. Reads the audit chain from `config.logDir`, aggregates per-article (Article 12 / Article 19 / Article 4a / GDPR 5+25), computes verdict, returns the structured report dict (`format: 'json'`) or rendered Markdown string (`format: 'markdown'`). PDF rejected at API layer with a clear error pointing to the Python SDK / CLI.
+- **`src/compliance-report.js`** -- pure-function `buildReport()` engine and `renderMarkdown()`. Cross-SDK JSON output is byte-equivalent to the Python output, including the v0.8.1 forward-compat `attestation.provenance_summary` slot with all-null KeyManifest fields.
+- **`compliance_summary()` v0.8.0 fields** (CR8-9) -- `config_snapshot` now surfaces `decision_id_enabled` (always `true` since v0.7.1), `system_version_pin_configured` (`true` iff both `deploymentVersion` and `instructionVersion` are set), and `compliance_reporting_available` (`true`).
+- **TypeScript declarations** -- new `ComplianceReportV080` interface and `generateComplianceReport` method on `Shield`. Forward-compat `attestation.provenance_summary` slot typed with nullable fields.
+
+### Tests
+
+- 574 -> 595 tests (+21): `test/test_compliance_report.js` covers per-article rollup (3 incl. **bias-stats-only-on-Art_4a correctness invariant**), `decision_id` reconciliation (3), schema contract (2), verdict (2), Markdown output (2 incl. ASCII-only assertion), format validation (2 -- PDF rejected with helpful error, unknown format rejected), attestation forward-compat (1), `compliance_summary` v0.8.0 fields (3), **AUDIT-3 adversarial-input hardening** (3 -- malformed entries, includeDecisions safety, string article_ref).
+
+### Security
+
+- **AUDIT-3 hardening**: `buildReport()` now coerces non-array `article_ref` to `[]` and skips non-string `timestamp` from sortable comparisons. Pre-fix, a hand-crafted audit entry with `timestamp=42` or `article_ref="EU_AI_Act_Art_12"` (string instead of array) would crash the reducer or silently corrupt per-article counts. Cross-SDK parity preserved (same hardening in Python).
+
+### Compatibility
+
+- All v0.6.x / v0.7.x audit chains verify under v0.8.0. New report-output schema is additive only. Cross-SDK byte-for-byte JSON parity preserved.
+
 ## [0.7.1] - 2026-05-19
 
 Mirror of cloakllm-py 0.7.1. Drop-in safe from v0.7.0. All v0.7.0 audit chains verify under v0.7.1.
