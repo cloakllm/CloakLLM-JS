@@ -28,6 +28,13 @@ const {
   SanitizationCertificate,
   MerkleTree,
   deriveEntityHashKey,
+  // v0.8.1 KM-1
+  KeyManifest,
+  deriveKeyManifest,
+  KEY_MANIFEST_SCHEMA_VERSION,
+  // v0.8.1 KM-2
+  ProvenanceReport,
+  verifyKeyProvenance,
 } = require('./attestation');
 const {
   validateToken,
@@ -89,4 +96,11 @@ module.exports = {
   BiasDetectionScopeError,
   BiasDetectionTimeoutError,
   BiasDetectionStateError,
+  // v0.8.1 KM-1 — externally-verifiable key provenance
+  KeyManifest,
+  deriveKeyManifest,
+  KEY_MANIFEST_SCHEMA_VERSION,
+  // v0.8.1 KM-2 — verifyKeyProvenance + ProvenanceReport
+  ProvenanceReport,
+  verifyKeyProvenance,
 };

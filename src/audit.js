@@ -39,6 +39,8 @@ const _ENTRY_ALLOWED_KEYS = new Set([
   // v0.7.1 C7.1-1 / C7.1-2 -- Compliance-schema extensions
   'decision_id',
   'system_version_pin',
+  // v0.8.1 KM-3 -- Externally-Verifiable Key Provenance (key_registered events only)
+  'key_manifest',
 ]);
 
 // v0.7.0 A4a-3: bias_context schema. See cloakllm-py audit.py for full rationale.
@@ -64,6 +66,96 @@ const _BIAS_CONTEXT_NUMERIC_FIELDS = new Set([
 const _BIAS_VALID_EVENT_TYPES = new Set([
   'bias_session_start', 'bias_pseudonymise', 'bias_finding', 'bias_session_end',
 ]);
+
+// v0.8.1 KM-3: key_registered event + key_manifest field validation.
+// Mirrors cloakllm-py audit.py.
+const _KEY_REGISTERED_EVENT_TYPE = 'key_registered';
+const _KEY_MANIFEST_ALLOWED_KEYS = new Set([
+  'key_id', 'public_key', 'deployer_id',
+  'valid_from', 'valid_until', 'purpose',
+  'manifest_version', 'manifest_hash',
+  'root_signature', 'root_key_id',
+]);
+const _KEY_MANIFEST_REQUIRED_KEYS = new Set([
+  'key_id', 'public_key', 'deployer_id',
+  'valid_from', 'purpose', 'manifest_version', 'manifest_hash',
+]);
+const _KEY_MANIFEST_STR_MAX_LEN = {
+  key_id: 64,
+  public_key: 64,
+  deployer_id: 256,
+  valid_from: 64,
+  valid_until: 64,
+  purpose: 64,
+  manifest_version: 16,
+  manifest_hash: 128,
+  root_signature: 128,
+  root_key_id: 256,
+};
+
+function _validateKeyManifest(km) {
+  if (km === null || typeof km !== 'object' || Array.isArray(km)) {
+    throw new Error(
+      `AUDIT SCHEMA VIOLATION: key_manifest must be a plain object ` +
+      `(got ${Array.isArray(km) ? 'array' : typeof km}).`
+    );
+  }
+  for (const required of _KEY_MANIFEST_REQUIRED_KEYS) {
+    if (!(required in km)) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: key_manifest missing required field ` +
+        `${JSON.stringify(required)}.`
+      );
+    }
+  }
+  for (const k of Object.keys(km)) {
+    if (typeof k !== 'string') {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: key_manifest key ${JSON.stringify(k)} must be a string.`
+      );
+    }
+    if (_isPrototypePollutionKey(k)) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: key_manifest key ${JSON.stringify(k)} ` +
+        `is a prototype-pollution vector.`
+      );
+    }
+    if (!_KEY_MANIFEST_ALLOWED_KEYS.has(k)) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: key_manifest contains disallowed key ` +
+        `${JSON.stringify(k)}. Allowed: ` +
+        `${Array.from(_KEY_MANIFEST_ALLOWED_KEYS).sort().join(', ')}.`
+      );
+    }
+    const v = km[k];
+    if (v === null || v === undefined) {
+      if (_KEY_MANIFEST_REQUIRED_KEYS.has(k)) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: key_manifest.${k} must not be null.`
+        );
+      }
+      continue;
+    }
+    if (typeof v !== 'string') {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: key_manifest.${k} must be a string ` +
+        `(got ${typeof v}).`
+      );
+    }
+    const limit = _KEY_MANIFEST_STR_MAX_LEN[k] || 256;
+    if (v.length > limit) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: key_manifest.${k} exceeds ${limit} chars ` +
+        `(got ${v.length}).`
+      );
+    }
+    if (v.indexOf('\x00') !== -1) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: key_manifest.${k} contains NUL byte.`
+      );
+    }
+  }
+}
 
 function _validateBiasContext(ctx) {
   if (!ctx || typeof ctx !== 'object' || Array.isArray(ctx)) {
@@ -409,6 +501,20 @@ function _validateAuditEntrySchema(entryData) {
       );
     }
   }
+
+  // v0.8.1 KM-3: key_manifest (key_registered events for externally-
+  // verifiable key provenance). Same coupling pattern as bias_context.
+  const keyManifest = entryData.key_manifest;
+  if (keyManifest !== null && keyManifest !== undefined) {
+    _validateKeyManifest(keyManifest);
+    const ev = entryData.event_type;
+    if (ev !== _KEY_REGISTERED_EVENT_TYPE) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: key_manifest requires ` +
+        `event_type='${_KEY_REGISTERED_EVENT_TYPE}' (got ${JSON.stringify(ev)}).`
+      );
+    }
+  }
 }
 
 /**
@@ -588,6 +694,7 @@ class AuditLogger {
     biasContext = null,
     decisionId = null,
     systemVersionPin = null,
+    keyManifest = null,
   }) {
     if (!this.config.auditEnabled) return null;
 
@@ -623,6 +730,8 @@ class AuditLogger {
       // v0.7.1 C7.1-1 / C7.1-2: compliance-schema extensions
       decision_id: decisionId,
       system_version_pin: systemVersionPin,
+      // v0.8.1 KM-3: key_manifest -- only present on key_registered events
+      key_manifest: keyManifest,
     };
 
     // Compliance mode injection (v0.6.0) -- fields are part of the hash chain.

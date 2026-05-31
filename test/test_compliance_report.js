@@ -286,6 +286,39 @@ describe('CR8 AUDIT-3 adversarial inputs', () => {
   });
 });
 
+// v0.8.1 KM-9: ProvenanceReport aggregator wires into attestation.provenance_summary
+describe('KM-9 provenance_summary aggregator', () => {
+  it('pre-v0.8.1 chain stays all-null', () => {
+    const entries = [{
+      seq: 0, timestamp: '2026-05-30T12:00:00+00:00',
+      event_type: 'sanitize', article_ref: ['EU_AI_Act_Art_12'],
+      key_id: 'k1', certificate_hash: 'h0',
+    }];
+    const r = buildReport({ auditEntries: entries, cloakllmVersion: '0.8.1' });
+    const ps = r.attestation.provenance_summary;
+    assert.equal(ps.manifests_found, null);
+    assert.equal(ps.manifests_valid, null);
+    assert.equal(ps.within_validity_window_pct, null);
+    assert.equal(ps.root_signature_status_distribution, null);
+  });
+
+  it('v0.8.1 chain fills provenance_summary fields', () => {
+    const { shield, dir } = makeShield({
+      attestationKey: require('../src').DeploymentKeyPair.generate(),
+      deployerId: 'acme',
+      keyValidFrom: '2026-01-01T00:00:00+00:00',
+      keyValidUntil: '2027-01-01T00:00:00+00:00',
+    });
+    shield.sanitize('email a@b.com');
+    shield.sanitize('email c@d.com');
+    const r = shield.generateComplianceReport();
+    const ps = r.attestation.provenance_summary;
+    assert.equal(ps.manifests_found, 1);
+    assert.equal(ps.manifests_valid, 1);
+    assert.equal(ps.root_signature_status_distribution.NOT_REQUESTED, 1);
+  });
+});
+
 describe('CR8-9 compliance_summary v0.8.0 fields', () => {
   it('decision_id_enabled is always true', () => {
     const { shield } = makeShield();

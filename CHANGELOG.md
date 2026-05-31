@@ -5,6 +5,29 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-05-31
+
+Mirror of cloakllm-py 0.8.1. **Headline: KeyManifest -- externally-verifiable key provenance.** Drop-in safe from v0.8.0.
+
+### Added
+
+- **`KeyManifest` class + `deriveKeyManifest()`** (KM-1) -- binds a signing key to a deployer identity + validity window. Cross-SDK byte-equivalent `manifest_hash` (verified vs Python: `5b8e0fd8...` matches in both for fixed-input test).
+- **`verifyKeyProvenance()` + `ProvenanceReport`** (KM-2) -- 5 independent checks + `clockSkewSeconds` opt-in tolerance. Backward-compat `manifest=null` falls through to signature-only.
+- **`key_registered` audit event** (KM-3) -- Shield emits on init when `deployerId` set. Allow-duplicate emission, verifier dedups by `manifest_hash`. B3 schema + `_validateKeyManifest()` extended.
+- **`shield.generateComplianceReport()` aggregator** (KM-9) -- fills the v0.8.0-reserved `attestation.provenance_summary` slot. Pre-v0.8.1 chains stay all-null. **Numeric parity fix**: whole-number percentages emitted as int in both SDKs (the `100.0` vs `100` divergence class flagged in v0.7.0 lessons).
+- **`ShieldConfig.deployerId` + `keyValidFrom` + `keyValidUntil`** (and `CLOAKLLM_DEPLOYER_ID` / `CLOAKLLM_KEY_VALID_FROM` / `CLOAKLLM_KEY_VALID_UNTIL` env).
+- **AUDIT-3 hardening from day 1** -- `_validateIso8601Utc`, `_validateKeyManifest`, `_parseIso8601Safe` reject malformed inputs. JS-specific: `_isPrototypePollutionKey` check on the new `key_manifest` allow-list keys.
+
+### Tests
+
+- 595 -> 622 tests (+27). New `test/test_key_manifest.js` covers KM-1 (11 tests), KM-2 (8 tests), KM-3 (3 tests), AUDIT-3 (1 test), KM-7 (2 tests). `test/test_compliance_report.js` adds 2 KM-9 tests. Full v0.6.x / v0.7.x / v0.8.0 audit-chain verify continues green.
+
+### Compatibility
+
+- All v0.6.x / v0.7.x / v0.8.0 audit chains verify under v0.8.1 unchanged.
+- `SanitizationCertificate.verify(publicKey)` v0.6.x API unchanged. KeyManifest is opt-in additive.
+- New `key_manifest` field on audit entries is null-by-default. Cross-SDK canonical-JSON parity preserved (900-byte byte-equivalent v0.8.1 report verified).
+
 ## [0.8.0] - 2026-05-31
 
 Mirror of cloakllm-py 0.8.0. **Headline: `shield.generateComplianceReport()` -- end-to-end EU AI Act audit reports** (JSON + Markdown; PDF is Python-only because `reportlab` is a Python-native lib). Drop-in safe from v0.7.1. All v0.7.x audit chains verify under v0.8.0.
