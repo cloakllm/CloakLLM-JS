@@ -736,9 +736,9 @@ class Shield {
         },
         {
           article: 'EU_AI_Act_Art_4a',
-          status: 'partial',
+          status: 'satisfied',
           notes:
-            'Tokenization qualifies as pseudonymisation; BiasDetectionSession not yet implemented (v0.7)',
+            'BiasDetectionSession workflow available (v0.7.0+) with all six Article 4a safeguards: recorded justification, pseudonymisation, in-memory-only token map, categories_allowed scope cap, hard-bounded max_lifetime_seconds with auto-wipe, full audit-chain recording.',
         },
       ],
       config_snapshot: {
@@ -748,10 +748,95 @@ class Shield {
         entity_hashing: cfg.entityHashing,
         attestation_enabled: attestationEnabled,
         retention_hint_days: cfg.retentionHintDays,
+        // v0.8.0 CR8-9: surface decision_id (always-on since v0.7.1) and the
+        // composed system_version_pin so compliance_summary() reflects the
+        // post-v0.7.1 capability set without auditors having to inspect the
+        // full audit chain.
+        decision_id_enabled: true,
+        system_version_pin_configured:
+          Boolean(cfg.deploymentVersion && cfg.instructionVersion),
+        compliance_reporting_available: true,
       },
       generated_at: new Date().toISOString(),
       cloakllm_version: CLOAKLLM_VERSION,
     };
+  }
+
+  /**
+   * v0.8.0 CR8: generate an end-to-end compliance report from the audit chain.
+   *
+   * @param {Object} [opts]
+   * @param {string|null} [opts.periodFrom]    ISO 8601 UTC, inclusive
+   * @param {string|null} [opts.periodTo]      ISO 8601 UTC, inclusive
+   * @param {string[]|null} [opts.articles]    optional whitelist
+   * @param {string} [opts.format]             'json' | 'markdown'
+   * @param {string|null} [opts.outPath]       write to file if set
+   * @param {boolean} [opts.includeDecisions]  expand per-decision rollup
+   * @returns {Object|string} JSON report dict or Markdown string
+   */
+  generateComplianceReport({
+    periodFrom = null,
+    periodTo = null,
+    articles = null,
+    format = 'json',
+    outPath = null,
+    includeDecisions = false,
+  } = {}) {
+    const { buildReport, renderMarkdown } = require('./compliance-report');
+
+    const fmt = String(format || 'json').toLowerCase();
+    if (!['json', 'markdown'].includes(fmt)) {
+      throw new Error(
+        `generateComplianceReport: unsupported format '${format}'. ` +
+        `JS SDK supports 'json' and 'markdown' only. ` +
+        `PDF is Python-only (reportlab dependency).`
+      );
+    }
+
+    // Read audit chain from logDir. v0.7.0 lesson: explicit utf-8.
+    const auditDir = this.config.logDir;
+    const entries = [];
+    if (auditDir && fs.existsSync(auditDir)) {
+      const files = fs.readdirSync(auditDir)
+        .filter(f => f.startsWith('audit_') && f.endsWith('.jsonl'))
+        .sort();
+      for (const f of files) {
+        const p = path.join(auditDir, f);
+        const text = fs.readFileSync(p, { encoding: 'utf-8' });
+        for (const line of text.split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try { entries.push(JSON.parse(trimmed)); } catch (_) { /* skip */ }
+        }
+      }
+    }
+
+    const report = buildReport({
+      auditEntries: entries,
+      periodFrom,
+      periodTo,
+      articles,
+      cloakllmVersion: CLOAKLLM_VERSION,
+      auditDir: auditDir || null,
+      includeDecisions,
+    });
+
+    if (fmt === 'json') {
+      if (outPath) {
+        const dir = path.dirname(outPath);
+        if (dir && dir !== '.') fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(outPath, JSON.stringify(report, null, 2), { encoding: 'utf-8' });
+      }
+      return report;
+    }
+    // markdown
+    const md = renderMarkdown(report);
+    if (outPath) {
+      const dir = path.dirname(outPath);
+      if (dir && dir !== '.') fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(outPath, md, { encoding: 'utf-8' });
+    }
+    return md;
   }
 
   /**

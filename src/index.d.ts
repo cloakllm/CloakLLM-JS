@@ -204,6 +204,14 @@ export class Shield {
   auditStats(): Record<string, any>;
   complianceSummary(): ComplianceSummary;
   exportComplianceConfig(outPath?: string): string;
+  generateComplianceReport(opts?: {
+    periodFrom?: string | null;
+    periodTo?: string | null;
+    articles?: string[] | null;
+    format?: 'json' | 'markdown';
+    outPath?: string | null;
+    includeDecisions?: boolean;
+  }): ComplianceReportV080 | string;
   verifyCertificate(certificate: SanitizationCertificate | Record<string, any>, publicKey?: Buffer | null): boolean;
   static generateAttestationKey(): DeploymentKeyPair;
 }
@@ -224,10 +232,68 @@ export interface ComplianceSummary {
     entity_hashing: boolean;
     attestation_enabled: boolean;
     retention_hint_days: number;
+    /** v0.8.0 CR8-9: decision_id has been always-on since v0.7.1. */
+    decision_id_enabled: boolean;
+    /** v0.8.0 CR8-9: true iff both deployment_version and instruction_version are set. */
+    system_version_pin_configured: boolean;
+    /** v0.8.0 CR8-9: signals shield.generateComplianceReport() is available. */
+    compliance_reporting_available: boolean;
   };
   generated_at: string;
   cloakllm_version: string;
   note?: string;
+}
+
+/**
+ * v0.8.0 CR8: end-to-end compliance report produced by
+ * `shield.generateComplianceReport()`. Schema mirror of
+ * `examples/compliance_report_schema.json`.
+ */
+export interface ComplianceReportV080 {
+  report_metadata: {
+    generated_at: string;
+    cloakllm_version: string;
+    schema_version: string;
+    audit_dir?: string;
+  };
+  period: { from: string | null; to: string | null };
+  articles_in_scope: string[] | null;
+  chain_integrity: {
+    verdict: 'verified' | 'broken';
+    total_entries: number;
+    anomalies: string[];
+  };
+  per_article: Record<string, {
+    evidence_event_count: number;
+    decision_count: number;
+    categories_detected: Record<string, number>;
+    pii_in_log: boolean;
+    bias_sessions?: number;
+    findings_recorded?: number;
+    wipe_confirmed_pct?: number;
+  }>;
+  attestation: {
+    schema_version: string;
+    entries_with_certificates: number;
+    signatures_valid: number;
+    key_ids: string[];
+    /** v0.8.1 KeyManifest forward-compat slot. All fields null in v0.8.0. */
+    provenance_summary: {
+      manifests_found: number | null;
+      manifests_valid: number | null;
+      within_validity_window_pct: number | null;
+      root_signature_status_distribution: Record<string, number> | null;
+    };
+  };
+  decisions?: Record<string, {
+    entry_count: number;
+    articles_touched: string[];
+    categories: Record<string, number>;
+    first_timestamp: string;
+    last_timestamp: string;
+  }>;
+  verdict: 'COMPLIANT' | 'NON_COMPLIANT';
+  verdict_reasons: string[];
 }
 
 export interface ComplianceReport {

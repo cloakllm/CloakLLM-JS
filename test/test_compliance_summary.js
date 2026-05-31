@@ -28,7 +28,9 @@ describe('Shield.complianceSummary', () => {
     assert.ok(articleNames.has('GDPR_Art_25_privacy_by_design'));
 
     const art4a = summary.articles_addressed.find(a => a.article === 'EU_AI_Act_Art_4a');
-    assert.equal(art4a.status, 'partial');
+    // v0.8.0 doc-fix: BiasDetectionSession shipped in v0.7.0, so status was
+    // incorrectly stuck on 'partial' from v0.6.x; now 'satisfied'.
+    assert.equal(art4a.status, 'satisfied');
 
     assert.equal(summary.config_snapshot.compliance_mode, 'eu_ai_act_article12');
     assert.equal(summary.config_snapshot.retention_hint_days, 180);

@@ -1,0 +1,313 @@
+/**
+ * v0.8.0 CR8 JS mirror of cloakllm-py/tests/test_compliance_report.py.
+ *
+ * Covers: per-article rollup, decision_id reconciliation, schema shape,
+ * verdict, Markdown output, compliance_summary v0.8.0 fields,
+ * attestation forward-compat. PDF tests live in the Python suite only.
+ */
+
+const { describe, it } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+const { Shield, ShieldConfig, BiasDetectionSession } = require('../src');
+const { buildReport, renderMarkdown, SCHEMA_VERSION, ATTESTATION_SCHEMA_VERSION } =
+  require('../src/compliance-report');
+
+function tmpDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'cloakllm-cr8-test-'));
+}
+
+function makeShield(extra = {}) {
+  const dir = tmpDir();
+  const cfg = new ShieldConfig({
+    auditEnabled: true,
+    logDir: dir,
+    complianceMode: 'eu_ai_act_article12',
+    deploymentVersion: 'prod-2026-q2',
+    instructionVersion: 'v4.1',
+    ...extra,
+  });
+  return { shield: new Shield(cfg), dir };
+}
+
+function readChain(dir) {
+  const entries = [];
+  for (const f of fs.readdirSync(dir).filter(f => f.startsWith('audit_') && f.endsWith('.jsonl')).sort()) {
+    for (const line of fs.readFileSync(path.join(dir, f), 'utf-8').split('\n')) {
+      const t = line.trim();
+      if (t) entries.push(JSON.parse(t));
+    }
+  }
+  return entries;
+}
+
+describe('CR8 per-article rollup', () => {
+  it('emits article 12 + article 19 for plain sanitize events', () => {
+    const { shield, dir } = makeShield();
+    shield.sanitize('email me at alice@example.com');
+    shield.sanitize('call bob at 555-1234');
+    const r = buildReport({
+      auditEntries: readChain(dir),
+      cloakllmVersion: '0.8.0',
+    });
+    assert.ok('EU_AI_Act_Art_12' in r.per_article);
+    assert.ok('EU_AI_Act_Art_19' in r.per_article);
+    assert.equal(r.per_article.EU_AI_Act_Art_12.evidence_event_count, 2);
+    assert.equal(r.per_article.EU_AI_Act_Art_12.pii_in_log, false);
+  });
+
+  it('article whitelist preserves zero-row for unobserved articles', () => {
+    const { shield, dir } = makeShield();
+    shield.sanitize('email me at alice@example.com');
+    const r = buildReport({
+      auditEntries: readChain(dir),
+      cloakllmVersion: '0.8.0',
+      articles: ['EU_AI_Act_Art_12', 'EU_AI_Act_Art_4a'],
+    });
+    assert.equal(r.per_article.EU_AI_Act_Art_4a.evidence_event_count, 0);
+    assert.equal(r.per_article.EU_AI_Act_Art_12.evidence_event_count, 1);
+    assert.deepEqual(r.articles_in_scope, ['EU_AI_Act_Art_12', 'EU_AI_Act_Art_4a']);
+  });
+
+  it('bias stats attach ONLY to Article 4a, not Art_12/Art_19', async () => {
+    const { shield, dir } = makeShield();
+    shield.sanitize('contact alice@x.com');
+    await BiasDetectionSession.run({
+      shield,
+      purpose: 'Pre-deployment fairness audit of model X',
+      necessityJustification: 'Quarterly fairness audit of model X v4.1',
+      categoriesAllowed: ['RACE', 'ETHNICITY'],
+      maxLifetimeSeconds: 3600,
+    }, async (sess) => {
+      const txt = 'German national';
+      const start = txt.indexOf('German');
+      sess.pseudonymise(txt, {
+        forceCategories: [[start, start + 'German'.length, 'ETHNICITY']],
+      });
+      sess.recordFinding({
+        findingSummary: 'FPR delta exceeds threshold for German cohort',
+        biasMetrics: { false_positive_rate: 0.12 },
+      });
+    });
+    const r = buildReport({
+      auditEntries: readChain(dir),
+      cloakllmVersion: '0.8.0',
+    });
+    // Art_4a has the bias stats
+    assert.ok('bias_sessions' in r.per_article.EU_AI_Act_Art_4a);
+    assert.equal(r.per_article.EU_AI_Act_Art_4a.bias_sessions, 1);
+    assert.equal(r.per_article.EU_AI_Act_Art_4a.findings_recorded, 1);
+    // Art_12 / Art_19 do NOT (correctness invariant from the spec)
+    assert.ok(!('bias_sessions' in r.per_article.EU_AI_Act_Art_12));
+    assert.ok(!('bias_sessions' in r.per_article.EU_AI_Act_Art_19));
+  });
+});
+
+describe('CR8 decision_id reconciliation', () => {
+  it('counts unique decision_ids per article', () => {
+    const { shield, dir } = makeShield();
+    for (let i = 0; i < 5; i++) shield.sanitize(`msg ${i}: a${i}@x.com`);
+    const r = buildReport({
+      auditEntries: readChain(dir),
+      cloakllmVersion: '0.8.0',
+    });
+    assert.equal(r.per_article.EU_AI_Act_Art_12.decision_count, 5);
+  });
+
+  it('include_decisions emits per-decision rollup', () => {
+    const { shield, dir } = makeShield();
+    for (let i = 0; i < 5; i++) shield.sanitize(`msg ${i}: a${i}@x.com`);
+    const r = buildReport({
+      auditEntries: readChain(dir),
+      cloakllmVersion: '0.8.0',
+      includeDecisions: true,
+    });
+    assert.equal(Object.keys(r.decisions).length, 5);
+  });
+
+  it('include_decisions defaults to false', () => {
+    const { shield, dir } = makeShield();
+    shield.sanitize('a@x.com');
+    const r = buildReport({
+      auditEntries: readChain(dir),
+      cloakllmVersion: '0.8.0',
+    });
+    assert.ok(!('decisions' in r));
+  });
+});
+
+describe('CR8 schema contract', () => {
+  it('shape matches examples/compliance_report_schema.json', () => {
+    const { shield, dir } = makeShield();
+    shield.sanitize('email a@x.com');
+    const r = buildReport({
+      auditEntries: readChain(dir),
+      cloakllmVersion: '0.8.0',
+      auditDir: dir,
+    });
+    assert.equal(r.report_metadata.schema_version, SCHEMA_VERSION);
+    assert.equal(r.attestation.schema_version, ATTESTATION_SCHEMA_VERSION);
+    assert.ok('verdict' in r);
+    assert.ok('verdict_reasons' in r);
+    assert.ok('chain_integrity' in r);
+    assert.ok('per_article' in r);
+    assert.ok('attestation' in r);
+  });
+
+  it('empty chain produces valid COMPLIANT report', () => {
+    const r = buildReport({
+      auditEntries: [],
+      cloakllmVersion: '0.8.0',
+    });
+    assert.equal(r.verdict, 'COMPLIANT');
+    assert.equal(r.chain_integrity.total_entries, 0);
+    assert.deepEqual(r.per_article, {});
+  });
+});
+
+describe('CR8 verdict', () => {
+  it('clean chain => COMPLIANT', () => {
+    const { shield, dir } = makeShield();
+    shield.sanitize('email a@x.com');
+    const r = buildReport({
+      auditEntries: readChain(dir),
+      cloakllmVersion: '0.8.0',
+    });
+    assert.equal(r.verdict, 'COMPLIANT');
+    assert.deepEqual(r.verdict_reasons, []);
+  });
+
+  it('pii_in_log=true => NON_COMPLIANT with human-readable reason', () => {
+    const fake = [{
+      seq: 0,
+      timestamp: '2026-05-30T12:00:00+00:00',
+      article_ref: ['EU_AI_Act_Art_12'],
+      event_type: 'sanitize',
+      pii_in_log: true,
+      categories: { EMAIL: 1 },
+    }];
+    const r = buildReport({ auditEntries: fake, cloakllmVersion: '0.8.0' });
+    assert.equal(r.verdict, 'NON_COMPLIANT');
+    // pii_in_log triggers a per_article reason (anomaly is logged into
+    // chain_integrity.anomalies but doesn't flip chain_valid in v0.8.0;
+    // chain validation is the caller's responsibility).
+    assert.equal(r.verdict_reasons.length, 1);
+    assert.ok(r.verdict_reasons.some(x => x.includes('pii_in_log=true')));
+    assert.equal(r.chain_integrity.anomalies.length, 1);
+  });
+});
+
+describe('CR8 Markdown output', () => {
+  it('renders ASCII-only Markdown', () => {
+    const { shield, dir } = makeShield();
+    shield.sanitize('email a@x.com');
+    const md = shield.generateComplianceReport({ format: 'markdown' });
+    assert.equal(typeof md, 'string');
+    assert.ok(md.startsWith('# CloakLLM Compliance Report'));
+    assert.ok(md.includes('Verdict'));
+    // ASCII only — no smart quotes, arrows, em-dashes (v0.7.0 cp1252 lesson)
+    // Allow -> (ASCII) but reject any non-ASCII char
+    for (const ch of md) {
+      assert.ok(ch.charCodeAt(0) < 128, `non-ASCII char in markdown: U+${ch.charCodeAt(0).toString(16)}`);
+    }
+  });
+
+  it('writes markdown to outPath', () => {
+    const { shield, dir } = makeShield();
+    shield.sanitize('email a@x.com');
+    const out = path.join(dir, 'report.md');
+    shield.generateComplianceReport({ format: 'markdown', outPath: out });
+    assert.ok(fs.existsSync(out));
+    assert.ok(fs.readFileSync(out, 'utf-8').includes('CloakLLM Compliance Report'));
+  });
+});
+
+describe('CR8 format validation', () => {
+  it('rejects PDF in JS SDK', () => {
+    const { shield } = makeShield();
+    assert.throws(
+      () => shield.generateComplianceReport({ format: 'pdf' }),
+      /PDF is Python-only/,
+    );
+  });
+
+  it('rejects unknown format', () => {
+    const { shield } = makeShield();
+    assert.throws(
+      () => shield.generateComplianceReport({ format: 'xml' }),
+      /unsupported format/,
+    );
+  });
+});
+
+describe('CR8 attestation forward-compat (v0.8.1)', () => {
+  it('emits provenance_summary slot with all-null KeyManifest fields', () => {
+    const r = buildReport({ auditEntries: [], cloakllmVersion: '0.8.0' });
+    const ps = r.attestation.provenance_summary;
+    assert.equal(ps.manifests_found, null);
+    assert.equal(ps.manifests_valid, null);
+    assert.equal(ps.within_validity_window_pct, null);
+    assert.equal(ps.root_signature_status_distribution, null);
+    assert.equal(r.attestation.schema_version, '1.0');
+  });
+});
+
+// v0.8.0 AUDIT-3: buildReport() must not crash on malformed audit entries.
+describe('CR8 AUDIT-3 adversarial inputs', () => {
+  const adversarial = [
+    {seq: 0, timestamp: '2026-05-30T12:00:00+00:00', article_ref: ['EU_AI_Act_Art_12']},
+    {seq: 1},
+    {timestamp: null, article_ref: null},
+    {seq: 'string', timestamp: 42, article_ref: 'not-a-list'},
+    {},
+    {seq: 5, timestamp: '2026-05-30T12:00:00+00:00', article_ref: [], pii_in_log: true},
+  ];
+
+  it('does not crash on malformed entries', () => {
+    const r = buildReport({auditEntries: adversarial, cloakllmVersion: '0.8.0'});
+    assert.equal(r.verdict, 'COMPLIANT');
+    assert.equal(r.chain_integrity.total_entries, 2);
+  });
+
+  it('does not crash with includeDecisions=true', () => {
+    const r = buildReport({auditEntries: adversarial, cloakllmVersion: '0.8.0', includeDecisions: true});
+    assert.ok('decisions' in r);
+  });
+
+  it('string article_ref does not corrupt per_article', () => {
+    const r = buildReport({
+      auditEntries: [{seq: 0, timestamp: '2026-05-30T12:00:00+00:00', article_ref: 'EU_AI_Act_Art_12'}],
+      cloakllmVersion: '0.8.0',
+    });
+    assert.deepEqual(r.per_article, {});
+  });
+});
+
+describe('CR8-9 compliance_summary v0.8.0 fields', () => {
+  it('decision_id_enabled is always true', () => {
+    const { shield } = makeShield();
+    const s = shield.complianceSummary();
+    assert.equal(s.config_snapshot.decision_id_enabled, true);
+  });
+
+  it('system_version_pin_configured true iff both versions set', () => {
+    const { shield: shieldWith } = makeShield();
+    assert.equal(shieldWith.complianceSummary().config_snapshot.system_version_pin_configured, true);
+
+    const cfgWithout = new ShieldConfig({
+      auditEnabled: true,
+      logDir: tmpDir(),
+      complianceMode: 'eu_ai_act_article12',
+    });
+    const shieldWithout = new Shield(cfgWithout);
+    assert.equal(shieldWithout.complianceSummary().config_snapshot.system_version_pin_configured, false);
+  });
+
+  it('compliance_reporting_available is true', () => {
+    const { shield } = makeShield();
+    assert.equal(shield.complianceSummary().config_snapshot.compliance_reporting_available, true);
+  });
+});
