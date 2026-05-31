@@ -76,6 +76,51 @@ class Shield {
         );
       }
     }
+
+    // v0.8.1 KM-3: emit a key_registered event once on init when the
+    // deployer has set deployerId. Allow-duplicate emission: concurrent
+    // Shield inits with the same key both emit; verifier dedups by
+    // manifest_hash. See PLAN_v081.md Decision 3.
+    if (
+      this._attestationKey !== null
+      && this.config.auditEnabled
+      && this.config.deployerId
+    ) {
+      this._emitKeyRegisteredEvent();
+    }
+  }
+
+  /**
+   * v0.8.1 KM-3: emit a key_registered audit event binding the signing
+   * key to a KeyManifest.
+   *
+   * Triggered on Shield construction when ALL of:
+   *   - audit logging is enabled
+   *   - an attestation key is configured
+   *   - config.deployerId is set
+   *
+   * Non-fatal on any error: key_registered is observability + provenance,
+   * not a correctness invariant for sanitize/desanitize.
+   * @private
+   */
+  _emitKeyRegisteredEvent() {
+    try {
+      const { deriveKeyManifest } = require('./attestation');
+      const manifest = deriveKeyManifest(this._attestationKey, {
+        deployerId: this.config.deployerId,
+        validFrom: this.config.keyValidFrom || undefined,
+        validUntil: this.config.keyValidUntil,
+      });
+      this.audit.log({
+        eventType: 'key_registered',
+        keyId: manifest.key_id,
+        keyManifest: manifest.toDict(),
+      });
+    } catch (e) {
+      if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
+        console.warn(`[cloakllm] Failed to emit key_registered event: ${e.message}`);
+      }
+    }
   }
 
   _emptyMetrics() {

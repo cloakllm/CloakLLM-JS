@@ -399,10 +399,480 @@ function deriveEntityHashKey(masterKey, salt = null, info = 'cloakllm-entity-has
   return Buffer.from(derived).toString('hex');
 }
 
+// ===================================================================
+// v0.8.1 KM-1: KeyManifest -- externally-verifiable key provenance
+// ===================================================================
+//
+// Mirror of cloakllm-py/cloakllm/attestation.py KeyManifest. Cross-SDK
+// invariant: Python-generated manifests verify in JS and vice versa.
+// See PLAN_v081.md + COMPLIANCE.md "Externally-Verifiable Key Provenance"
+// for the threat model and explicit boundary callouts.
+
+const KEY_MANIFEST_SCHEMA_VERSION = '1.0';
+const _KEY_MANIFEST_PURPOSE_WHITELIST = new Set(['cloakllm-audit-attestation']);
+const _KEY_MANIFEST_DEPLOYER_ID_MAX = 256;
+const _KEY_MANIFEST_ROOT_KEY_ID_MAX = 256;
+
+const _MANIFEST_HASH_FIELDS = [
+  'key_id', 'public_key', 'deployer_id',
+  'valid_from', 'valid_until', 'purpose',
+  'manifest_version', 'root_key_id',
+];
+
+function _validateIso8601Utc(value, fieldName) {
+  // v0.8.1 AUDIT-3 hardening from day 1: defensive parsing at the boundary.
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new RangeError(`${fieldName} must be a non-empty ISO 8601 string`);
+  }
+  if (!(value.endsWith('+00:00') || value.endsWith('Z'))) {
+    throw new RangeError(
+      `${fieldName} must be UTC (end with '+00:00' or 'Z'); got '${value}'`
+    );
+  }
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) {
+    throw new RangeError(`${fieldName} is not a valid ISO 8601 timestamp: '${value}'`);
+  }
+}
+
+/**
+ * v0.8.1 externally-verifiable binding of a signing key to a deployer
+ * identity and validity window.
+ *
+ * Mirror of the Python KeyManifest dataclass. Frozen via Object.freeze
+ * to match the dataclass(frozen=True) semantics.
+ */
+class KeyManifest {
+  constructor(fields) {
+    this.key_id = fields.key_id;
+    this.public_key = fields.public_key;
+    this.deployer_id = fields.deployer_id;
+    this.valid_from = fields.valid_from;
+    this.valid_until = fields.valid_until;
+    this.purpose = fields.purpose;
+    this.manifest_version = fields.manifest_version;
+    this.manifest_hash = fields.manifest_hash;
+    this.root_signature = fields.root_signature !== undefined ? fields.root_signature : null;
+    this.root_key_id = fields.root_key_id !== undefined ? fields.root_key_id : null;
+    Object.freeze(this);
+  }
+
+  /**
+   * Return all fields as a plain object for JSON serialization.
+   * Field order matches Python KeyManifest.to_dict for cross-SDK byte parity.
+   * @returns {Object}
+   */
+  toDict() {
+    return {
+      key_id: this.key_id,
+      public_key: this.public_key,
+      deployer_id: this.deployer_id,
+      valid_from: this.valid_from,
+      valid_until: this.valid_until,
+      purpose: this.purpose,
+      manifest_version: this.manifest_version,
+      manifest_hash: this.manifest_hash,
+      root_signature: this.root_signature,
+      root_key_id: this.root_key_id,
+    };
+  }
+
+  /**
+   * Reconstruct a KeyManifest from a dict (e.g. from JSON.parse).
+   * Does NOT re-validate field semantics or recompute manifest_hash --
+   * use verifyKeyProvenance() to check integrity.
+   * @param {Object} d
+   * @returns {KeyManifest}
+   */
+  static fromDict(d) {
+    if (d === null || typeof d !== 'object' || Array.isArray(d)) {
+      throw new TypeError('KeyManifest.fromDict expects a plain object');
+    }
+    return new KeyManifest({
+      key_id: String(d.key_id || ''),
+      public_key: String(d.public_key || ''),
+      deployer_id: String(d.deployer_id || ''),
+      valid_from: String(d.valid_from || ''),
+      valid_until: d.valid_until == null ? null : d.valid_until,
+      purpose: String(d.purpose || ''),
+      manifest_version: String(d.manifest_version || KEY_MANIFEST_SCHEMA_VERSION),
+      manifest_hash: String(d.manifest_hash || ''),
+      root_signature: d.root_signature == null ? null : d.root_signature,
+      root_key_id: d.root_key_id == null ? null : d.root_key_id,
+    });
+  }
+}
+
+function _computeManifestHash(fields) {
+  const payload = {
+    key_id: fields.key_id,
+    public_key: fields.public_key,
+    deployer_id: fields.deployer_id,
+    valid_from: fields.valid_from,
+    valid_until: fields.valid_until,
+    purpose: fields.purpose,
+    manifest_version: fields.manifest_version,
+    root_key_id: fields.root_key_id,
+  };
+  return crypto.createHash('sha256')
+    .update(canonicalJson(payload), 'utf-8')
+    .digest('hex');
+}
+
+/**
+ * Produce a KeyManifest binding `keypair` to `deployerId`.
+ *
+ * If `rootSigningCallback` is provided, the manifest_hash bytes are handed
+ * to the callback (typically an HSM call or an offline ceremony script)
+ * which returns a 64-byte Ed25519 signature. CloakLLM runtime NEVER holds
+ * the root key -- the callback is the trust boundary.
+ *
+ * @param {DeploymentKeyPair} keypair
+ * @param {Object} opts
+ * @param {string} opts.deployerId             Required, 1..256 chars.
+ * @param {string} [opts.validFrom]            ISO 8601 UTC. Default: now.
+ * @param {string|null} [opts.validUntil]      ISO 8601 UTC or null.
+ * @param {string} [opts.purpose]              Must be 'cloakllm-audit-attestation'.
+ * @param {Function} [opts.rootSigningCallback]   (Buffer) => Buffer (64-byte sig).
+ * @param {string} [opts.rootKeyId]            Required iff rootSigningCallback is set.
+ * @returns {KeyManifest}
+ */
+function deriveKeyManifest(keypair, opts) {
+  if (!opts || typeof opts.deployerId !== 'string' || opts.deployerId.length === 0) {
+    throw new RangeError('deployerId must be a non-empty string');
+  }
+  if (opts.deployerId.length > _KEY_MANIFEST_DEPLOYER_ID_MAX) {
+    throw new RangeError(
+      `deployerId must be <= ${_KEY_MANIFEST_DEPLOYER_ID_MAX} chars `
+      + `(got ${opts.deployerId.length})`
+    );
+  }
+  if (opts.deployerId.includes('\x00')) {
+    throw new RangeError('deployerId must not contain NUL bytes');
+  }
+
+  const purpose = opts.purpose || 'cloakllm-audit-attestation';
+  if (!_KEY_MANIFEST_PURPOSE_WHITELIST.has(purpose)) {
+    throw new RangeError(
+      `purpose must be one of [${[..._KEY_MANIFEST_PURPOSE_WHITELIST].sort().map(p => `'${p}'`).join(',')}]; `
+      + `got '${purpose}'`
+    );
+  }
+
+  let validFrom = opts.validFrom;
+  if (validFrom == null) {
+    // Match Python isoformat() with +00:00 suffix.
+    validFrom = new Date().toISOString().replace('Z', '+00:00');
+  }
+  _validateIso8601Utc(validFrom, 'validFrom');
+
+  const validUntil = opts.validUntil == null ? null : opts.validUntil;
+  if (validUntil !== null) {
+    _validateIso8601Utc(validUntil, 'validUntil');
+    if (validUntil < validFrom) {
+      throw new RangeError(
+        `validUntil (${validUntil}) must be >= validFrom (${validFrom})`
+      );
+    }
+  }
+
+  const rootSigningCallback = opts.rootSigningCallback || null;
+  const rootKeyId = opts.rootKeyId == null ? null : opts.rootKeyId;
+
+  if (rootSigningCallback !== null && typeof rootKeyId !== 'string') {
+    throw new RangeError(
+      'rootKeyId is required when rootSigningCallback is provided '
+      + '(auditors need it to look up the root public key)'
+    );
+  }
+  if (rootKeyId !== null) {
+    if (typeof rootKeyId !== 'string' || rootKeyId.length === 0) {
+      throw new RangeError('rootKeyId must be a non-empty string');
+    }
+    if (rootKeyId.length > _KEY_MANIFEST_ROOT_KEY_ID_MAX) {
+      throw new RangeError(
+        `rootKeyId must be <= ${_KEY_MANIFEST_ROOT_KEY_ID_MAX} chars`
+      );
+    }
+    if (rootKeyId.includes('\x00')) {
+      throw new RangeError('rootKeyId must not contain NUL bytes');
+    }
+  }
+
+  const manifestHash = _computeManifestHash({
+    key_id: keypair.keyId,
+    public_key: keypair.publicKeyB64,
+    deployer_id: opts.deployerId,
+    valid_from: validFrom,
+    valid_until: validUntil,
+    purpose,
+    manifest_version: KEY_MANIFEST_SCHEMA_VERSION,
+    root_key_id: rootKeyId,
+  });
+
+  let rootSignature = null;
+  if (rootSigningCallback !== null) {
+    const sigBuf = rootSigningCallback(Buffer.from(manifestHash, 'ascii'));
+    if (!Buffer.isBuffer(sigBuf) || sigBuf.length !== 64) {
+      throw new RangeError(
+        `rootSigningCallback must return a 64-byte Buffer (raw Ed25519 signature); `
+        + `got length ${sigBuf && sigBuf.length}`
+      );
+    }
+    rootSignature = sigBuf.toString('base64');
+  }
+
+  return new KeyManifest({
+    key_id: keypair.keyId,
+    public_key: keypair.publicKeyB64,
+    deployer_id: opts.deployerId,
+    valid_from: validFrom,
+    valid_until: validUntil,
+    purpose,
+    manifest_version: KEY_MANIFEST_SCHEMA_VERSION,
+    manifest_hash: manifestHash,
+    root_signature: rootSignature,
+    root_key_id: rootKeyId,
+  });
+}
+
+// ===================================================================
+// v0.8.1 KM-2: verifyKeyProvenance + ProvenanceReport
+// ===================================================================
+//
+// Mirror of cloakllm-py KM-2. ProvenanceReport JSON shape is identical
+// across SDKs so KM-9 aggregator (compliance_report) produces byte-equal
+// output in both languages.
+
+const ROOT_SIG_VALID = 'VALID';
+const ROOT_SIG_INVALID = 'INVALID';
+const ROOT_SIG_NOT_REQUESTED = 'NOT_REQUESTED';
+const ROOT_SIG_UNVERIFIED_NO_KEY = 'UNVERIFIED_NO_KEY';
+
+const PROVENANCE_VERIFIED = 'VERIFIED';
+const PROVENANCE_FAILED = 'FAILED';
+const PROVENANCE_UNVERIFIED = 'UNVERIFIED';
+
+/**
+ * v0.8.1 KM-2: structured ProvenanceReport.
+ *
+ * Auditors cite individual fields, not a single bool. KM-9 aggregates
+ * these into compliance_report.attestation.provenance_summary.
+ */
+class ProvenanceReport {
+  constructor(fields) {
+    this.overall_valid = fields.overall_valid;
+    this.provenance_status = fields.provenance_status;
+    this.signature_valid = fields.signature_valid;
+    this.key_id_matches = fields.key_id_matches;
+    this.within_validity_window = fields.within_validity_window;
+    this.root_signature_status = fields.root_signature_status;
+    this.manifest_hash_consistent = fields.manifest_hash_consistent;
+    this.checked_at = fields.checked_at;
+    this.notes = Array.isArray(fields.notes) ? fields.notes : [];
+    Object.freeze(this);
+  }
+
+  toDict() {
+    return {
+      overall_valid: this.overall_valid,
+      provenance_status: this.provenance_status,
+      signature_valid: this.signature_valid,
+      key_id_matches: this.key_id_matches,
+      within_validity_window: this.within_validity_window,
+      root_signature_status: this.root_signature_status,
+      manifest_hash_consistent: this.manifest_hash_consistent,
+      checked_at: this.checked_at,
+      notes: Array.from(this.notes),
+    };
+  }
+}
+
+function _parseIso8601Safe(value) {
+  // Defensive parse: returns null for any non-string or unparseable value.
+  if (typeof value !== 'string' || value.length === 0) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+}
+
+/**
+ * v0.8.1 KM-2: verify a certificate's signature AND the key's provenance.
+ *
+ * @param {SanitizationCertificate} certificate
+ * @param {KeyManifest|null} manifest                Null -> backward-compat mode.
+ * @param {Object} [opts]
+ * @param {Buffer} [opts.rootPublicKey]              32-byte raw Ed25519 root public key.
+ * @param {string} [opts.now]                        ISO 8601 UTC. Default: now.
+ * @param {number} [opts.clockSkewSeconds=0]         Default: strict zero tolerance.
+ * @returns {ProvenanceReport}
+ */
+function verifyKeyProvenance(certificate, manifest, opts) {
+  opts = opts || {};
+  const rootPublicKey = opts.rootPublicKey || null;
+  const clockSkewSeconds = Number.isFinite(opts.clockSkewSeconds) ? opts.clockSkewSeconds : 0;
+  const checkedAt = opts.now != null ? opts.now : new Date().toISOString().replace('Z', '+00:00');
+  const notes = [];
+
+  // --- Check 1: signature_valid ---
+  // JS SanitizationCertificate uses snake_case fields (cert.public_key,
+  // cert.key_id) to match the wire JSON shape -- mirrors Py.
+  let signatureValid = false;
+  try {
+    const pkBytes = manifest !== null
+      ? Buffer.from(manifest.public_key, 'base64')
+      : (certificate.public_key
+          ? Buffer.from(certificate.public_key, 'base64')
+          : Buffer.alloc(0));
+    if (pkBytes.length > 0) {
+      signatureValid = certificate.verify(pkBytes);
+    }
+  } catch (e) {
+    notes.push(`signature check raised: ${e.name}: ${e.message}`);
+    signatureValid = false;
+  }
+
+  // --- Backward-compat short-circuit ---
+  if (manifest === null) {
+    notes.push('manifest=null: signature-only check (UNVERIFIED provenance)');
+    return new ProvenanceReport({
+      overall_valid: signatureValid,
+      provenance_status: PROVENANCE_UNVERIFIED,
+      signature_valid: signatureValid,
+      key_id_matches: null,
+      within_validity_window: null,
+      root_signature_status: ROOT_SIG_NOT_REQUESTED,
+      manifest_hash_consistent: null,
+      checked_at: checkedAt,
+      notes,
+    });
+  }
+
+  // --- Check 2: key_id_matches ---
+  const keyIdMatches = certificate.key_id === manifest.key_id;
+  if (!keyIdMatches) {
+    notes.push(
+      `key_id mismatch: cert.key_id='${certificate.key_id}' != manifest.key_id='${manifest.key_id}'`
+    );
+  }
+
+  // --- Check 3: within_validity_window ---
+  const certTs = _parseIso8601Safe(certificate.timestamp);
+  const validFromTs = _parseIso8601Safe(manifest.valid_from);
+  const validUntilTs = _parseIso8601Safe(manifest.valid_until);
+  let withinValidityWindow;
+  if (certTs === null || validFromTs === null) {
+    withinValidityWindow = false;
+    notes.push(
+      `cannot compare timestamps: cert.timestamp='${certificate.timestamp}', `
+      + `manifest.valid_from='${manifest.valid_from}'`
+    );
+  } else {
+    const skewMs = clockSkewSeconds * 1000;
+    const lowerMs = validFromTs.getTime() - skewMs;
+    const certMs = certTs.getTime();
+    if (validUntilTs === null) {
+      withinValidityWindow = certMs >= lowerMs;
+    } else {
+      const upperMs = validUntilTs.getTime() + skewMs;
+      withinValidityWindow = certMs >= lowerMs && certMs <= upperMs;
+    }
+    if (!withinValidityWindow) {
+      if (validUntilTs !== null && certMs > validUntilTs.getTime() + skewMs) {
+        notes.push(`key expired: cert.timestamp=${certificate.timestamp} > valid_until=${manifest.valid_until}`);
+      } else if (certMs < validFromTs.getTime() - skewMs) {
+        notes.push(`cert before key validity: cert.timestamp=${certificate.timestamp} < valid_from=${manifest.valid_from}`);
+      }
+    }
+  }
+
+  // --- Check 5: manifest_hash_consistent ---
+  const expectedHash = _computeManifestHash({
+    key_id: manifest.key_id,
+    public_key: manifest.public_key,
+    deployer_id: manifest.deployer_id,
+    valid_from: manifest.valid_from,
+    valid_until: manifest.valid_until,
+    purpose: manifest.purpose,
+    manifest_version: manifest.manifest_version,
+    root_key_id: manifest.root_key_id,
+  });
+  const manifestHashConsistent = expectedHash === manifest.manifest_hash;
+  if (!manifestHashConsistent) {
+    notes.push('manifest_hash mismatch: manifest fields have been tampered with');
+  }
+
+  // --- Check 4: root_signature_status ---
+  let rootSignatureStatus;
+  if (manifest.root_signature === null || manifest.root_signature === undefined) {
+    rootSignatureStatus = ROOT_SIG_NOT_REQUESTED;
+    notes.push('no root_signature on manifest (self-published, not load-bearing)');
+  } else if (rootPublicKey === null) {
+    rootSignatureStatus = ROOT_SIG_UNVERIFIED_NO_KEY;
+    notes.push(
+      `manifest has root_signature but caller did not supply rootPublicKey `
+      + `(root_key_id='${manifest.root_key_id}')`
+    );
+  } else {
+    try {
+      const sigBuf = Buffer.from(manifest.root_signature, 'base64');
+      const valid = DeploymentKeyPair.verify(
+        rootPublicKey,
+        Buffer.from(manifest.manifest_hash, 'ascii'),
+        sigBuf,
+      );
+      rootSignatureStatus = valid ? ROOT_SIG_VALID : ROOT_SIG_INVALID;
+      if (!valid) {
+        notes.push(
+          `root_signature INVALID: claimed signer root_key_id='${manifest.root_key_id}' `
+          + 'but signature does not verify'
+        );
+      }
+    } catch (e) {
+      rootSignatureStatus = ROOT_SIG_INVALID;
+      notes.push(`root_signature parse/verify raised: ${e.name}: ${e.message}`);
+    }
+  }
+
+  // --- overall_valid ---
+  const requiredChecks = [signatureValid, keyIdMatches, withinValidityWindow, manifestHashConsistent];
+  if (manifest.root_signature !== null && manifest.root_signature !== undefined
+      && rootPublicKey !== null) {
+    requiredChecks.push(rootSignatureStatus === ROOT_SIG_VALID);
+  }
+  const overallValid = requiredChecks.every(Boolean);
+
+  return new ProvenanceReport({
+    overall_valid: overallValid,
+    provenance_status: overallValid ? PROVENANCE_VERIFIED : PROVENANCE_FAILED,
+    signature_valid: signatureValid,
+    key_id_matches: keyIdMatches,
+    within_validity_window: withinValidityWindow,
+    root_signature_status: rootSignatureStatus,
+    manifest_hash_consistent: manifestHashConsistent,
+    checked_at: checkedAt,
+    notes,
+  });
+}
+
 module.exports = {
   DeploymentKeyPair,
   SanitizationCertificate,
   MerkleTree,
   deriveEntityHashKey,
   canonicalJson,
+  // v0.8.1 KM-1
+  KeyManifest,
+  deriveKeyManifest,
+  KEY_MANIFEST_SCHEMA_VERSION,
+  // v0.8.1 KM-2
+  ProvenanceReport,
+  verifyKeyProvenance,
+  ROOT_SIG_VALID,
+  ROOT_SIG_INVALID,
+  ROOT_SIG_NOT_REQUESTED,
+  ROOT_SIG_UNVERIFIED_NO_KEY,
+  PROVENANCE_VERIFIED,
+  PROVENANCE_FAILED,
+  PROVENANCE_UNVERIFIED,
 };

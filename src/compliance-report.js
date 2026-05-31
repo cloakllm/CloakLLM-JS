@@ -42,6 +42,95 @@ function _emptyAttestation() {
 }
 
 /**
+ * v0.8.1 KM-9: aggregate ProvenanceReports into attestation.provenance_summary.
+ *
+ * Mirror of cloakllm-py _fill_provenance_summary. Walks the chain for
+ * key_registered events, dedups by manifest_hash, runs verifyKeyProvenance
+ * for each certified entry, populates the four aggregate fields.
+ *
+ * Pre-v0.8.1 chains (no key_registered events) -> all fields stay null.
+ */
+function _fillProvenanceSummary({ auditEntries, periodFrom, periodTo, attestation }) {
+  const {
+    KeyManifest, verifyKeyProvenance, SanitizationCertificate,
+  } = require('./attestation');
+
+  // Resolve KeyManifests, dedup by manifest_hash.
+  const manifestsByKeyId = {};
+  const seenHashes = new Set();
+  for (const entry of auditEntries) {
+    if (entry.event_type !== 'key_registered') continue;
+    if (!_inPeriod(entry.timestamp, periodFrom, periodTo)) continue;
+    const kmDict = entry.key_manifest;
+    if (!kmDict || typeof kmDict !== 'object' || Array.isArray(kmDict)) continue;
+    const h = kmDict.manifest_hash;
+    if (typeof h !== 'string' || seenHashes.has(h)) continue;
+    let km;
+    try {
+      km = KeyManifest.fromDict(kmDict);
+    } catch (_) {
+      continue;  // malformed -- defensive skip
+    }
+    seenHashes.add(h);
+    manifestsByKeyId[km.key_id] = km;
+  }
+
+  if (Object.keys(manifestsByKeyId).length === 0) {
+    // No key_registered events -- leave all-null (back-compat with v0.8.0).
+    return;
+  }
+
+  let manifestsValid = 0;
+  let withinWindowN = 0;
+  let withinWindowTotal = 0;
+  const rootDistribution = {
+    VALID: 0, INVALID: 0, NOT_REQUESTED: 0, UNVERIFIED_NO_KEY: 0,
+  };
+
+  // Evaluate each manifest once for structural validity.
+  for (const km of Object.values(manifestsByKeyId)) {
+    const placeholder = new SanitizationCertificate({
+      timestamp: km.valid_from,
+      key_id: km.key_id,
+      public_key: km.public_key,
+    });
+    const r = verifyKeyProvenance(placeholder, km);
+    const manifestIsValid = r.manifest_hash_consistent
+      && r.root_signature_status !== 'INVALID';
+    if (manifestIsValid) manifestsValid += 1;
+    rootDistribution[r.root_signature_status] =
+      (rootDistribution[r.root_signature_status] || 0) + 1;
+  }
+
+  // Per-cert window membership.
+  for (const entry of auditEntries) {
+    if (entry.event_type === 'key_registered') continue;
+    if (!entry.certificate_hash) continue;
+    if (!_inPeriod(entry.timestamp, periodFrom, periodTo)) continue;
+    const kid = entry.key_id;
+    if (!kid || !(kid in manifestsByKeyId)) continue;
+    withinWindowTotal += 1;
+    const km = manifestsByKeyId[kid];
+    const synth = new SanitizationCertificate({
+      timestamp: entry.timestamp || '',
+      key_id: kid,
+      public_key: km.public_key,
+    });
+    const r = verifyKeyProvenance(synth, km);
+    if (r.within_validity_window) withinWindowN += 1;
+  }
+
+  attestation.provenance_summary = {
+    manifests_found: Object.keys(manifestsByKeyId).length,
+    manifests_valid: manifestsValid,
+    within_validity_window_pct: withinWindowTotal === 0
+      ? 0.0
+      : Math.round(10000 * withinWindowN / withinWindowTotal) / 100,
+    root_signature_status_distribution: rootDistribution,
+  };
+}
+
+/**
  * Pure-function rollup engine. Mirror of build_report() in Python.
  *
  * @param {Object} opts
@@ -63,6 +152,11 @@ function buildReport({
   auditDir = null,
   includeDecisions = false,
 }) {
+  // v0.8.1 KM-9: materialise once so we can rewalk for provenance_summary
+  // without forcing callers to buffer themselves.
+  const auditEntriesBuffered = Array.from(auditEntries);
+  auditEntries = auditEntriesBuffered;
+
   const articleStats = {};
   const decisionStats = {};
   const chainAnomalies = [];
@@ -228,6 +322,15 @@ function buildReport({
   attestation.entries_with_certificates = entriesWithCerts;
   attestation.signatures_valid = signaturesValid;
   attestation.key_ids = [...keyIds].sort();
+
+  // v0.8.1 KM-9: fill provenance_summary from key_registered events.
+  // Pre-v0.8.1 chains have no key_registered events -- provenance_summary
+  // stays all-null (additive back-compat with v0.8.0 reports).
+  _fillProvenanceSummary({
+    auditEntries: auditEntriesBuffered,
+    periodFrom, periodTo,
+    attestation,
+  });
 
   const report = {
     report_metadata: {

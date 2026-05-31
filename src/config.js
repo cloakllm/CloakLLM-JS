@@ -174,6 +174,19 @@ class ShieldConfig {
     this.instructionVersion = options.instructionVersion
       ?? process.env.CLOAKLLM_INSTRUCTION_VERSION ?? null;
 
+    // --- v0.8.1 KM-3: deployer identity for KeyManifest ---
+    // When deployerId is set alongside an attestation key, Shield emits a
+    // key_registered audit event on first init. Mirror of cloakllm-py config.
+    /** @type {string|null} */
+    this.deployerId = options.deployerId
+      ?? process.env.CLOAKLLM_DEPLOYER_ID ?? null;
+    /** @type {string|null} */
+    this.keyValidFrom = options.keyValidFrom
+      ?? process.env.CLOAKLLM_KEY_VALID_FROM ?? null;
+    /** @type {string|null} */
+    this.keyValidUntil = options.keyValidUntil
+      ?? process.env.CLOAKLLM_KEY_VALID_UNTIL ?? null;
+
     // Note: KMS-based key providers are Python-only for v0.6. JS uses local Ed25519 keys.
 
     // --- Input length cap (v0.6.1 H1.4) ---
