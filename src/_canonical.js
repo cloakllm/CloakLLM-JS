@@ -98,34 +98,9 @@ function canonicalJson(value) {
   throw new Error(`canonicalJson: unsupported type ${typeof value}`);
 }
 
-/**
- * v0.6.0-compatible canonical JSON. Used ONLY by `legacyCanonical: true`
- * verification paths to validate older audit chains. Sunset in v0.7.0.
- *
- * Mirrors the v0.6.0 audit.js replacer-based approach.
- */
-function _legacyCanonicalJson(data) {
-  return JSON.stringify(data, (_, v) => {
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
-      return Object.keys(v)
-        // v0.6.3 H9: filter prototype-pollution vectors before assignment.
-        // Mirrors canonicalJson at line 84 — JSON.parse can produce __proto__
-        // as own enumerable, and `o[k] = v[k]` with k='__proto__' triggers
-        // the [[Set]] semantics that mutate the prototype rather than create
-        // an own property. Same filter keeps the legacy path safe.
-        .filter((k) => k !== '__proto__' && k !== 'constructor' && k !== 'prototype')
-        .sort()
-        // v0.6.4 G9: Object.create(null) instead of {} as the accumulator.
-        // Defense-in-depth: even if a future change drops the filter above,
-        // the prototype-less base means o['__proto__'] = X creates an own
-        // property rather than triggering Object.prototype's setter.
-        .reduce((o, k) => {
-          o[k] = v[k];
-          return o;
-        }, Object.create(null));
-    }
-    return v;
-  });
-}
+// History: `_legacyCanonicalJson` (the v0.6.0 replacer-based variant) was
+// REMOVED in v0.9.0 (LC-1 phase 2), completing the sunset announced in
+// v0.7.x phase 1. Pre-v0.6.1 chains must be re-archived under a
+// v0.6.1..v0.8.x release. One canonicalizer, one hash semantics.
 
-module.exports = { canonicalJson, _legacyCanonicalJson };
+module.exports = { canonicalJson };

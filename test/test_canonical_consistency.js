@@ -16,7 +16,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
-const { canonicalJson, _legacyCanonicalJson } = require('../src/_canonical');
+const { canonicalJson } = require('../src/_canonical');
 
 const FIXTURE_PATH = path.join(__dirname, 'fixtures', 'canonical_corpus.json');
 const CORPUS = JSON.parse(fs.readFileSync(FIXTURE_PATH, 'utf-8'));
@@ -86,18 +86,12 @@ describe('canonicalJson — non-ASCII preservation (B1 regression)', () => {
   });
 });
 
-describe('_legacyCanonicalJson — backward-compat shim', () => {
-  it('preserves v0.6.0 replacer-based output for ASCII', () => {
-    const out = _legacyCanonicalJson({ b: 'hello', a: 1 });
-    assert.equal(out, '{"a":1,"b":"hello"}');
-  });
-
-  it('does NOT escape non-ASCII (v0.6.0 used native JSON.stringify)', () => {
-    // Note: v0.6.0 JS already preserved UTF-8 — the divergence with Python was
-    // that v0.6.0 Python escaped to \u and v0.6.0 JS did not. The legacy JS
-    // shim here matches what v0.6.0 JS produced (so an old JS-side audit
-    // chain still verifies under legacy mode).
-    const out = _legacyCanonicalJson({ x: 'café' });
-    assert.ok(out.includes('café'));
+// v0.9.0 LC-1: the _legacyCanonicalJson shim was removed (sunset phase 2).
+// The removal itself is defended below + the raise-with-message behavior
+// is covered in test_v090_lc1.js.
+describe('_legacyCanonicalJson removed (v0.9.0 LC-1)', () => {
+  it('the shim must NOT be exported anymore', () => {
+    const can = require('../src/_canonical');
+    assert.equal(can._legacyCanonicalJson, undefined);
   });
 });

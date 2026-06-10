@@ -9,7 +9,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { canonicalJson, _legacyCanonicalJson } = require('./_canonical');
+const { canonicalJson } = require('./_canonical');
 
 const GENESIS_HASH = '0'.repeat(64);
 
@@ -652,20 +652,17 @@ class AuditLogger {
   }
 
   /**
-   * Compute SHA-256 hash of entry data.
+   * Compute SHA-256 hash of entry data via canonical JSON.
+   *
+   * v0.9.0 LC-1: the legacyCanonical encoder branch was removed (v0.7.x
+   * sunset phase 1 -> v0.9.0 phase 2). One canonicalizer, one hash
+   * semantics, cross-SDK byte-equivalent since v0.6.1.
    *
    * @param {Object} data - The audit entry dict.
-   * @param {Object} [options]
-   * @param {boolean} [options.legacyCanonical=false] - When true, use the
-   *   v0.6.0-compatible canonicalizer (replacer-based JSON.stringify). Used
-   *   ONLY by `verifyChain` when the caller opts in to verifying a pre-v0.6.1
-   *   chain. Sunset in v0.7.0.
    * @returns {string}
    */
-  static computeHash(data, options = null) {
-    const legacy = options && options.legacyCanonical === true;
-    const encoder = legacy ? _legacyCanonicalJson : canonicalJson;
-    const canonical = encoder(data);
+  static computeHash(data) {
+    const canonical = canonicalJson(data);
     return crypto.createHash('sha256').update(canonical).digest('hex');
   }
 
@@ -793,17 +790,10 @@ class AuditLogger {
    * @param {'compliance_report'} [options.outputFormat] - When set, returns a
    *   structured compliance report dict instead of the default { valid, errors, finalSeq }.
    *   When omitted, the existing return shape is preserved (backward compatible).
-   * @param {boolean} [options.legacyCanonical] - When true, recompute hashes
-   *   using the v0.6.0-compatible canonicalizer (`ensure_ascii=true` /
-   *   `\uXXXX`-escaped non-ASCII). Required to verify audit chains that were
-   *   originally written by **Python v0.5.x or v0.6.0** and contain non-ASCII
-   *   characters (names, addresses, etc.) -- Python escaped them, JS preserved
-   *   UTF-8, so the canonical bytes diverged. v0.6.1+ chains use a unified
-   *   canonicalizer and verify cross-SDK without this flag. **Sunset in v0.7.0
-   *   with a deprecation warning whenever the flag is set.**
-   *
-   *   See `CloakLLM/COMPLIANCE.md` § Cross-Language Compatibility for the
-   *   full asymmetry description and a per-SDK flag table.
+   * @param {boolean} [options.legacyCanonical] - REMOVED in v0.9.0 (LC-1
+   *   phase 2, per the v0.7.x sunset). The option remains recognized for
+   *   one more cycle so callers get an actionable error instead of silent
+   *   misverification; passing true throws. Hard-deleted in v1.0.
    *
    * Backward-compat: passing a string (the old `logFilePath` positional argument)
    * is still accepted.
@@ -822,10 +812,13 @@ class AuditLogger {
       legacyCanonical = options.legacyCanonical === true;
     }
     if (legacyCanonical) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        '[cloakllm] legacyCanonical=true is a backward-compat shim for ' +
-        'v0.5.x / v0.6.0 audit chains; sunset in v0.7.0.'
+      // v0.9.0 LC-1 phase 2: raise (don't vanish) -- mirror of the Py
+      // ValueError. The option will be hard-deleted in v1.0.
+      throw new Error(
+        'legacyCanonical was removed in v0.9.0. Pre-v0.6.1 audit chains ' +
+        '(v0.5.x / v0.6.0 with non-ASCII content) must be re-verified and ' +
+        're-archived under a v0.6.1..v0.8.x release before upgrading. ' +
+        'See CHANGELOG v0.7.1 (sunset phase 1) and v0.9.0 (removal).'
       );
     }
     const reportEnabled = outputFormat === 'compliance_report';
@@ -918,10 +911,10 @@ class AuditLogger {
           }
         }
 
-        // Recompute entry hash (legacyCanonical thread-through)
+        // Recompute entry hash (single canonicalizer since v0.9.0 LC-1)
         const storedHash = entry.entry_hash;
         delete entry.entry_hash;
-        const recomputed = AuditLogger.computeHash(entry, { legacyCanonical });
+        const recomputed = AuditLogger.computeHash(entry);
         // v0.6.4 G8: timing-safe comparison via crypto.timingSafeEqual.
         // String !== short-circuits at first mismatched char -- an attacker
         // with many verifyChain calls could in principle infer hash bytes

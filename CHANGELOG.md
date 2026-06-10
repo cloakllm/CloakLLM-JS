@@ -5,6 +5,31 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-06-10
+
+Mirror of cloakllm-py 0.9.0. **Headline: Key Revocation.** Cross-SDK byte-equivalent `list_hash` verified (`ead04756...` matches Py for fixed-input test).
+
+**BREAKING (the scheduled one):** `verifyAudit({legacyCanonical: true})` now throws (sunset phase 2). Pre-v0.6.1 chains must be re-archived under v0.6.1..v0.8.x first.
+
+### Added
+
+- **`RevocationList` + `deriveRevocationList()`** (RV-1) -- root-signed out-of-band artifact; permanent entries; order-sensitive hash; valid empty list.
+- **`verifyKeyProvenance` check #6** (RV-2) -- `revocationList` option; 5 status values; REVOKED + LIST_INVALID fail; X.509/OCSP cert-predates semantics; runs standalone without manifest.
+- **`shield.recordKeyRevocation()`** advisory event + **`ShieldConfig.revocationListPath`** with own-key fail-hard at construction (RV-3, full Py parity per locked Open Q3).
+- **`provenance_summary` revocation rollup** (RV-4, additive) + `revocationListPath` option on `generateComplianceReport()`. KM-9 fill switched to `Object.assign` merge (same replace-bug fix as Py).
+
+### Removed
+
+- **`legacyCanonical` encoder path** (LC-1 phase 2). `_legacyCanonicalJson` deleted from `_canonical.js`; `computeHash` options removed; `verifyChain({legacyCanonical: true})` throws an actionable Error for one more cycle; hard-delete in v1.0.
+
+### Tests
+
+- 622 -> 640 tests (+18 net): new `test/test_revocation_list.js` (+22 covering RV-1/2/3/4 + LC-1), minus 5 removed legacy-shim tests, plus 1 removal guard.
+
+### Compatibility
+
+- All v0.6.1+ chains verify unchanged. Revocation surface opt-in additive. Cross-SDK canonical parity preserved.
+
 ## [0.8.2] - 2026-05-31
 
 **No JS-side changes.** Version bump for lockstep with cloakllm-py 0.8.2 (Ed25519-backend-missing hardening, Python-only). JS uses Node's built-in `crypto` module for Ed25519 — zero runtime dependencies, no install footgun. The v0.8.1 KeyManifest surface in JS is unaffected.

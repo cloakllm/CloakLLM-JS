@@ -21,7 +21,7 @@ const path = require('path');
 const os = require('os');
 
 const { Shield, ShieldConfig } = require('../src');
-const { _legacyCanonicalJson } = require('../src/_canonical');
+// v0.9.0 LC-1: _legacyCanonicalJson import removed with the shim.
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'cloakllm-h9-js-'));
@@ -144,34 +144,10 @@ describe('H9 — ShieldConfig.customPatterns validates pattern names', () => {
   });
 });
 
-// ─── Surface 3: _legacyCanonicalJson filters prototype keys ───────────────
-
-describe('H9 — _legacyCanonicalJson filters prototype-pollution keys', () => {
-  it('skips __proto__ in legacy canonical output', () => {
-    const malicious = JSON.parse('{"__proto__":{"polluted":true},"a":1}');
-    const result = _legacyCanonicalJson(malicious);
-    // Result should serialize only the legitimate `a` field.
-    assert.equal(result, '{"a":1}');
-  });
-
-  it('skips constructor and prototype too', () => {
-    // Build an object with these as own enumerable properties (JSON.parse
-    // is the easy way; bracket assignment for `__proto__` would trigger
-    // the setter, but `constructor`/`prototype` are regular property names).
-    const malicious = JSON.parse('{"constructor":"evil","prototype":"evil","b":2}');
-    const result = _legacyCanonicalJson(malicious);
-    assert.equal(result, '{"b":2}');
-  });
-
-  it('does NOT pollute Object.prototype during legacy canonicalization', () => {
-    const malicious = JSON.parse('{"__proto__":{"polluted":"yes"}}');
-    _legacyCanonicalJson(malicious);
-    // After calling the legacy serializer, no random object should have
-    // gained a `polluted` property on its prototype.
-    assert.equal({}.polluted, undefined);
-    assert.equal([].polluted, undefined);
-  });
-});
+// ─── Surface 3: REMOVED in v0.9.0 LC-1 ────────────────────────────────────
+// _legacyCanonicalJson was removed (sunset phase 2); its H9 prototype-
+// pollution surface went with it. The primary canonicalJson H9 coverage
+// in Surface 1 remains. A removal guard lives in test_canonical_consistency.js.
 
 // ─── Surface 4: shield metrics skip prototype keys ────────────────────────
 
