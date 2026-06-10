@@ -77,6 +77,13 @@ class Shield {
       }
     }
 
+    // v0.9.0 RV-3 (Open Q3 locked): fail-hard when this Shield's OWN
+    // signing key appears in the configured revocation list. Runs BEFORE
+    // key_registered emission so a revoked key never gets re-registered.
+    if (this._attestationKey !== null && this.config.revocationListPath) {
+      this._checkOwnKeyNotRevoked();
+    }
+
     // v0.8.1 KM-3: emit a key_registered event once on init when the
     // deployer has set deployerId. Allow-duplicate emission: concurrent
     // Shield inits with the same key both emit; verifier dedups by
@@ -88,6 +95,78 @@ class Shield {
     ) {
       this._emitKeyRegisteredEvent();
     }
+  }
+
+  /**
+   * v0.9.0 RV-3 (Open Q3): throw when this Shield's own signing key is
+   * revoked per the configured list. Defensive on the list itself: an
+   * unreadable or unparseable list throws too -- a deployer who
+   * CONFIGURED revocation checking must not run blind.
+   * @private
+   */
+  _checkOwnKeyNotRevoked() {
+    const { RevocationList } = require('./attestation');
+    const keyId = this._attestationKey.keyId;
+    if (!keyId) return;
+    let rl;
+    try {
+      const data = JSON.parse(
+        fs.readFileSync(this.config.revocationListPath, { encoding: 'utf-8' })
+      );
+      rl = RevocationList.fromDict(data);
+    } catch (e) {
+      throw new Error(
+        `CloakLLM Shield: revocationListPath is set but the list at `
+        + `${this.config.revocationListPath} could not be loaded `
+        + `(${e.name}: ${e.message}). Fix or unset CLOAKLLM_REVOCATION_LIST `
+        + `/ ShieldConfig.revocationListPath.`
+      );
+    }
+    const entry = rl.findEntry(keyId);
+    if (entry !== null) {
+      const nowIso = new Date().toISOString().replace('Z', '+00:00');
+      if (entry.revoked_at <= nowIso) {
+        throw new Error(
+          `CloakLLM Shield: this Shield's signing key (${keyId}) was `
+          + `REVOKED at ${entry.revoked_at} (reason: ${entry.reason}) per `
+          + `the revocation list at ${this.config.revocationListPath}. `
+          + `Signing with a revoked key is always a mistake. Generate a `
+          + `new keypair, publish a new KeyManifest, and update the deployment.`
+        );
+      }
+    }
+  }
+
+  /**
+   * v0.9.0 RV-3: write an ADVISORY key_revoked event to the audit chain.
+   * NOT the security boundary -- the root-signed out-of-band
+   * RevocationList is. Mirror of Py Shield.record_key_revocation.
+   * @param {string} keyId
+   * @param {string} reason  compromised | superseded | ceased_operation | unspecified
+   * @param {string|null} [revokedAt]  ISO 8601 UTC. Default: now.
+   */
+  recordKeyRevocation(keyId, reason, revokedAt = null) {
+    const VALID_REASONS = new Set(['compromised', 'superseded', 'ceased_operation', 'unspecified']);
+    if (typeof keyId !== 'string' || keyId.length === 0 || keyId.length > 64) {
+      throw new RangeError('keyId must be a non-empty string <= 64 chars');
+    }
+    if (!VALID_REASONS.has(reason)) {
+      throw new RangeError(
+        `reason must be one of [${[...VALID_REASONS].sort().join(', ')}]`
+      );
+    }
+    if (revokedAt == null) {
+      revokedAt = new Date().toISOString().replace('Z', '+00:00');
+    }
+    this.audit.log({
+      eventType: 'key_revoked',
+      keyId,
+      metadata: {
+        revoked_at: revokedAt,
+        reason,
+        advisory: true,  // NOT the security boundary
+      },
+    });
   }
 
   /**
@@ -826,8 +905,28 @@ class Shield {
     format = 'json',
     outPath = null,
     includeDecisions = false,
+    revocationListPath = null,
   } = {}) {
     const { buildReport, renderMarkdown } = require('./compliance-report');
+
+    // v0.9.0 RV-4: load the revocation list. Explicit arg wins; falls back
+    // to config.revocationListPath. Null -> revocation fields keep their
+    // false/null defaults.
+    let revocationList = null;
+    const rlPath = revocationListPath || this.config.revocationListPath;
+    if (rlPath) {
+      const { RevocationList } = require('./attestation');
+      try {
+        revocationList = RevocationList.fromDict(
+          JSON.parse(fs.readFileSync(rlPath, { encoding: 'utf-8' }))
+        );
+      } catch (e) {
+        throw new Error(
+          `generateComplianceReport: revocation list at ${rlPath} could `
+          + `not be loaded (${e.name}: ${e.message}).`
+        );
+      }
+    }
 
     const fmt = String(format || 'json').toLowerCase();
     if (!['json', 'markdown'].includes(fmt)) {
@@ -864,6 +963,7 @@ class Shield {
       cloakllmVersion: CLOAKLLM_VERSION,
       auditDir: auditDir || null,
       includeDecisions,
+      revocationList,
     });
 
     if (fmt === 'json') {

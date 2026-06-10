@@ -35,6 +35,11 @@ const {
   // v0.8.1 KM-2
   ProvenanceReport,
   verifyKeyProvenance,
+  // v0.9.0 RV-1/RV-2
+  RevocationEntry,
+  RevocationList,
+  deriveRevocationList,
+  REVOCATION_LIST_SCHEMA_VERSION,
 } = require('./attestation');
 const {
   validateToken,
@@ -103,4 +108,9 @@ module.exports = {
   // v0.8.1 KM-2 — verifyKeyProvenance + ProvenanceReport
   ProvenanceReport,
   verifyKeyProvenance,
+  // v0.9.0 RV-1/RV-2 — key revocation
+  RevocationEntry,
+  RevocationList,
+  deriveRevocationList,
+  REVOCATION_LIST_SCHEMA_VERSION,
 };

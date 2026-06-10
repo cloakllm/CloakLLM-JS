@@ -187,6 +187,15 @@ class ShieldConfig {
     this.keyValidUntil = options.keyValidUntil
       ?? process.env.CLOAKLLM_KEY_VALID_UNTIL ?? null;
 
+    // --- v0.9.0 RV-3: revocation list awareness ---
+    // When set: (1) Shield constructor fail-hards if its OWN signing key
+    // appears in the list (mirror of Py -- the v0.8.2 "don't surprise the
+    // deployer" doctrine); (2) generateComplianceReport() uses it by
+    // default to fill the revocation fields.
+    /** @type {string|null} */
+    this.revocationListPath = options.revocationListPath
+      ?? process.env.CLOAKLLM_REVOCATION_LIST ?? null;
+
     // Note: KMS-based key providers are Python-only for v0.6. JS uses local Ed25519 keys.
 
     // --- Input length cap (v0.6.1 H1.4) ---

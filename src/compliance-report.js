@@ -37,8 +37,41 @@ function _emptyAttestation() {
       manifests_valid: null,
       within_validity_window_pct: null,
       root_signature_status_distribution: null,
+      // v0.9.0 RV-4 (additive): revocation rollup. false/null when no
+      // revocation list was supplied to the report.
+      revocation_checked: false,
+      revoked_keys_found: null,
+      certs_after_revocation: null,
     },
   };
+}
+
+/**
+ * v0.9.0 RV-4: fill the revocation rollup. Mirror of cloakllm-py
+ * _fill_revocation_summary. No-op when revocationList is null.
+ */
+function _fillRevocationSummary({ auditEntries, periodFrom, periodTo, attestation, revocationList }) {
+  if (revocationList == null) return;
+
+  const revokedKeysSeen = new Set();
+  let certsAfter = 0;
+  for (const entry of auditEntries) {
+    if (!entry.certificate_hash) continue;
+    if (!_inPeriod(entry.timestamp, periodFrom, periodTo)) continue;
+    const kid = entry.key_id;
+    if (typeof kid !== 'string' || kid.length === 0) continue;
+    const revEntry = revocationList.findEntry(kid);
+    if (revEntry === null) continue;
+    revokedKeysSeen.add(kid);
+    const ts = entry.timestamp;
+    if (typeof ts === 'string' && ts >= revEntry.revoked_at) {
+      certsAfter += 1;
+    }
+  }
+
+  attestation.provenance_summary.revocation_checked = true;
+  attestation.provenance_summary.revoked_keys_found = revokedKeysSeen.size;
+  attestation.provenance_summary.certs_after_revocation = certsAfter;
 }
 
 /**
@@ -120,14 +153,16 @@ function _fillProvenanceSummary({ auditEntries, periodFrom, periodTo, attestatio
     if (r.within_validity_window) withinWindowN += 1;
   }
 
-  attestation.provenance_summary = {
+  // v0.9.0: assign (not replace) so the RV-4 revocation keys -- and any
+  // future additive keys -- survive this fill (same merge-fix as Py).
+  Object.assign(attestation.provenance_summary, {
     manifests_found: Object.keys(manifestsByKeyId).length,
     manifests_valid: manifestsValid,
     within_validity_window_pct: withinWindowTotal === 0
       ? 0.0
       : Math.round(10000 * withinWindowN / withinWindowTotal) / 100,
     root_signature_status_distribution: rootDistribution,
-  };
+  });
 }
 
 /**
@@ -151,6 +186,7 @@ function buildReport({
   cloakllmVersion,
   auditDir = null,
   includeDecisions = false,
+  revocationList = null,
 }) {
   // v0.8.1 KM-9: materialise once so we can rewalk for provenance_summary
   // without forcing callers to buffer themselves.
@@ -330,6 +366,14 @@ function buildReport({
     auditEntries: auditEntriesBuffered,
     periodFrom, periodTo,
     attestation,
+  });
+
+  // v0.9.0 RV-4: fill revocation rollup when a list was supplied.
+  _fillRevocationSummary({
+    auditEntries: auditEntriesBuffered,
+    periodFrom, periodTo,
+    attestation,
+    revocationList,
   });
 
   const report = {

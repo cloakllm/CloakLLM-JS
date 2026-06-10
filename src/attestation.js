@@ -670,6 +670,9 @@ class ProvenanceReport {
     this.manifest_hash_consistent = fields.manifest_hash_consistent;
     this.checked_at = fields.checked_at;
     this.notes = Array.isArray(fields.notes) ? fields.notes : [];
+    // v0.9.0 RV-2 (additive; defaults preserve pre-v0.9.0 construction sites)
+    this.revocation_status = fields.revocation_status !== undefined
+      ? fields.revocation_status : 'NOT_CHECKED';
     Object.freeze(this);
   }
 
@@ -684,6 +687,7 @@ class ProvenanceReport {
       manifest_hash_consistent: this.manifest_hash_consistent,
       checked_at: this.checked_at,
       notes: Array.from(this.notes),
+      revocation_status: this.revocation_status,
     };
   }
 }
@@ -712,6 +716,7 @@ function verifyKeyProvenance(certificate, manifest, opts) {
   const rootPublicKey = opts.rootPublicKey || null;
   const clockSkewSeconds = Number.isFinite(opts.clockSkewSeconds) ? opts.clockSkewSeconds : 0;
   const checkedAt = opts.now != null ? opts.now : new Date().toISOString().replace('Z', '+00:00');
+  const revocationList = opts.revocationList || null;  // v0.9.0 RV-2
   const notes = [];
 
   // --- Check 1: signature_valid ---
@@ -735,8 +740,14 @@ function verifyKeyProvenance(certificate, manifest, opts) {
   // --- Backward-compat short-circuit ---
   if (manifest === null) {
     notes.push('manifest=null: signature-only check (UNVERIFIED provenance)');
+    // v0.9.0 RV-2: revocation runs standalone even without a manifest --
+    // a revoked key is a revoked key regardless of provenance status.
+    const revocationStatus = _checkRevocation(
+      certificate, null, revocationList, rootPublicKey, notes,
+    );
+    const revOk = revocationStatus !== 'REVOKED' && revocationStatus !== 'LIST_INVALID';
     return new ProvenanceReport({
-      overall_valid: signatureValid,
+      overall_valid: signatureValid && revOk,
       provenance_status: PROVENANCE_UNVERIFIED,
       signature_valid: signatureValid,
       key_id_matches: null,
@@ -745,6 +756,7 @@ function verifyKeyProvenance(certificate, manifest, opts) {
       manifest_hash_consistent: null,
       checked_at: checkedAt,
       notes,
+      revocation_status: revocationStatus,
     });
   }
 
@@ -834,11 +846,23 @@ function verifyKeyProvenance(certificate, manifest, opts) {
     }
   }
 
+  // --- Check 6 (v0.9.0 RV-2): revocation ---
+  const revocationStatus = _checkRevocation(
+    certificate, manifest, revocationList, rootPublicKey, notes,
+  );
+
   // --- overall_valid ---
   const requiredChecks = [signatureValid, keyIdMatches, withinValidityWindow, manifestHashConsistent];
   if (manifest.root_signature !== null && manifest.root_signature !== undefined
       && rootPublicKey !== null) {
     requiredChecks.push(rootSignatureStatus === ROOT_SIG_VALID);
+  }
+  // v0.9.0: REVOKED and LIST_INVALID fail; NOT_CHECKED / NOT_REVOKED /
+  // REVOKED_BUT_CERT_PREDATES do not (the last per X.509/OCSP semantics).
+  if (revocationList !== null) {
+    requiredChecks.push(
+      revocationStatus !== 'REVOKED' && revocationStatus !== 'LIST_INVALID'
+    );
   }
   const overallValid = requiredChecks.every(Boolean);
 
@@ -852,7 +876,298 @@ function verifyKeyProvenance(certificate, manifest, opts) {
     manifest_hash_consistent: manifestHashConsistent,
     checked_at: checkedAt,
     notes,
+    revocation_status: revocationStatus,
   });
+}
+
+// ===================================================================
+// v0.9.0 RV-1: RevocationList -- root-signed key revocation
+// ===================================================================
+//
+// Mirror of cloakllm-py RV-1. OUT-OF-BAND artifact (PLAN_v090.md Design
+// Decision 1): a compromised runtime controls the audit chain, so the
+// revocation list lives outside the attacker's write path -- published
+// by the deployer, root-signed, handed to the auditor out-of-band.
+// Inline key_revoked audit events are advisory only.
+
+const REVOCATION_LIST_SCHEMA_VERSION = '1.0';
+const _REVOCATION_REASON_WHITELIST = new Set([
+  'compromised', 'superseded', 'ceased_operation', 'unspecified',
+]);
+const _REVOCATION_MAX_ENTRIES = 4096;
+
+// Revocation status values (cross-SDK enum)
+const REVOCATION_NOT_REVOKED = 'NOT_REVOKED';
+const REVOCATION_REVOKED = 'REVOKED';
+const REVOCATION_REVOKED_BUT_CERT_PREDATES = 'REVOKED_BUT_CERT_PREDATES';
+const REVOCATION_NOT_CHECKED = 'NOT_CHECKED';
+const REVOCATION_LIST_INVALID = 'LIST_INVALID';
+
+class RevocationEntry {
+  constructor({ key_id, revoked_at, reason }) {
+    this.key_id = key_id;
+    this.revoked_at = revoked_at;
+    this.reason = reason;
+    Object.freeze(this);
+  }
+  toDict() {
+    return { key_id: this.key_id, revoked_at: this.revoked_at, reason: this.reason };
+  }
+}
+
+class RevocationList {
+  constructor(fields) {
+    this.deployer_id = fields.deployer_id;
+    this.entries = Object.freeze(Array.from(fields.entries || []));
+    this.issued_at = fields.issued_at;
+    this.list_version = fields.list_version;
+    this.list_hash = fields.list_hash;
+    this.root_signature = fields.root_signature !== undefined ? fields.root_signature : null;
+    this.root_key_id = fields.root_key_id !== undefined ? fields.root_key_id : null;
+    Object.freeze(this);
+  }
+
+  toDict() {
+    return {
+      deployer_id: this.deployer_id,
+      entries: this.entries.map(e => e.toDict()),
+      issued_at: this.issued_at,
+      list_version: this.list_version,
+      list_hash: this.list_hash,
+      root_signature: this.root_signature,
+      root_key_id: this.root_key_id,
+    };
+  }
+
+  static fromDict(d) {
+    if (d === null || typeof d !== 'object' || Array.isArray(d)) {
+      throw new TypeError('RevocationList.fromDict expects a plain object');
+    }
+    const entries = [];
+    if (Array.isArray(d.entries)) {
+      for (const item of d.entries) {
+        if (item && typeof item === 'object' && !Array.isArray(item)) {
+          entries.push(new RevocationEntry({
+            key_id: String(item.key_id || ''),
+            revoked_at: String(item.revoked_at || ''),
+            reason: String(item.reason || ''),
+          }));
+        }
+      }
+    }
+    return new RevocationList({
+      deployer_id: String(d.deployer_id || ''),
+      entries,
+      issued_at: String(d.issued_at || ''),
+      list_version: String(d.list_version || REVOCATION_LIST_SCHEMA_VERSION),
+      list_hash: String(d.list_hash || ''),
+      root_signature: d.root_signature == null ? null : d.root_signature,
+      root_key_id: d.root_key_id == null ? null : d.root_key_id,
+    });
+  }
+
+  /** Earliest revoked_at wins if a key is (incorrectly) listed twice. */
+  findEntry(keyId) {
+    let found = null;
+    for (const e of this.entries) {
+      if (e.key_id === keyId) {
+        if (found === null || e.revoked_at < found.revoked_at) found = e;
+      }
+    }
+    return found;
+  }
+}
+
+function _computeRevocationListHash(fields) {
+  const payload = {
+    deployer_id: fields.deployer_id,
+    entries: fields.entries,  // array of {key_id, revoked_at, reason}
+    issued_at: fields.issued_at,
+    list_version: fields.list_version,
+    root_key_id: fields.root_key_id,
+  };
+  return crypto.createHash('sha256')
+    .update(canonicalJson(payload), 'utf-8')
+    .digest('hex');
+}
+
+/**
+ * v0.9.0 RV-1: produce a RevocationList. Empty list is valid (a signed,
+ * dated "nothing revoked" claim). Same root-signing ceremony contract
+ * as deriveKeyManifest.
+ */
+function deriveRevocationList({
+  deployerId,
+  entries,
+  issuedAt = null,
+  rootSigningCallback = null,
+  rootKeyId = null,
+}) {
+  if (typeof deployerId !== 'string' || deployerId.length === 0) {
+    throw new RangeError('deployerId must be a non-empty string');
+  }
+  if (deployerId.length > _KEY_MANIFEST_DEPLOYER_ID_MAX) {
+    throw new RangeError(`deployerId must be <= ${_KEY_MANIFEST_DEPLOYER_ID_MAX} chars`);
+  }
+  if (deployerId.includes('\x00')) {
+    throw new RangeError('deployerId must not contain NUL bytes');
+  }
+
+  if (issuedAt == null) {
+    issuedAt = new Date().toISOString().replace('Z', '+00:00');
+  }
+  _validateIso8601Utc(issuedAt, 'issuedAt');
+
+  if (!Array.isArray(entries)) {
+    throw new RangeError('entries must be an array');
+  }
+  if (entries.length > _REVOCATION_MAX_ENTRIES) {
+    throw new RangeError(`entries exceeds ${_REVOCATION_MAX_ENTRIES} cap`);
+  }
+  const normalized = [];
+  const seenKeyIds = new Set();
+  entries.forEach((item, i) => {
+    let entry;
+    if (item instanceof RevocationEntry) {
+      entry = item;
+    } else if (item && typeof item === 'object' && !Array.isArray(item)) {
+      entry = new RevocationEntry({
+        key_id: item.key_id, revoked_at: item.revoked_at, reason: item.reason,
+      });
+    } else {
+      throw new RangeError(`entries[${i}] must be RevocationEntry or object`);
+    }
+    if (typeof entry.key_id !== 'string' || entry.key_id.length === 0) {
+      throw new RangeError(`entries[${i}].key_id must be a non-empty string`);
+    }
+    if (entry.key_id.length > 64 || entry.key_id.includes('\x00')) {
+      throw new RangeError(`entries[${i}].key_id invalid (cap 64, no NUL)`);
+    }
+    if (seenKeyIds.has(entry.key_id)) {
+      throw new RangeError(
+        `entries[${i}].key_id '${entry.key_id}' is duplicated. One entry per `
+        + 'key; revocation is permanent (rotate instead of re-revoking).'
+      );
+    }
+    seenKeyIds.add(entry.key_id);
+    _validateIso8601Utc(entry.revoked_at, `entries[${i}].revoked_at`);
+    if (!_REVOCATION_REASON_WHITELIST.has(entry.reason)) {
+      throw new RangeError(
+        `entries[${i}].reason must be one of `
+        + `[${[..._REVOCATION_REASON_WHITELIST].sort().join(', ')}]; got '${entry.reason}'`
+      );
+    }
+    normalized.push(entry);
+  });
+
+  if (rootSigningCallback !== null && typeof rootKeyId !== 'string') {
+    throw new RangeError('rootKeyId is required when rootSigningCallback is provided');
+  }
+  if (rootKeyId !== null) {
+    if (typeof rootKeyId !== 'string' || rootKeyId.length === 0
+        || rootKeyId.length > _KEY_MANIFEST_ROOT_KEY_ID_MAX
+        || rootKeyId.includes('\x00')) {
+      throw new RangeError('rootKeyId invalid (non-empty, cap 256, no NUL)');
+    }
+  }
+
+  const listHash = _computeRevocationListHash({
+    deployer_id: deployerId,
+    entries: normalized.map(e => e.toDict()),
+    issued_at: issuedAt,
+    list_version: REVOCATION_LIST_SCHEMA_VERSION,
+    root_key_id: rootKeyId,
+  });
+
+  let rootSignature = null;
+  if (rootSigningCallback !== null) {
+    const sigBuf = rootSigningCallback(Buffer.from(listHash, 'ascii'));
+    if (!Buffer.isBuffer(sigBuf) || sigBuf.length !== 64) {
+      throw new RangeError('rootSigningCallback must return a 64-byte Buffer');
+    }
+    rootSignature = sigBuf.toString('base64');
+  }
+
+  return new RevocationList({
+    deployer_id: deployerId,
+    entries: normalized,
+    issued_at: issuedAt,
+    list_version: REVOCATION_LIST_SCHEMA_VERSION,
+    list_hash: listHash,
+    root_signature: rootSignature,
+    root_key_id: rootKeyId,
+  });
+}
+
+/**
+ * v0.9.0 RV-2: compute revocation_status (check #6). Integrity-first:
+ * tampered/mismatched list -> LIST_INVALID (worse than no list).
+ * Mirror of cloakllm-py _check_revocation.
+ */
+function _checkRevocation(certificate, manifest, revocationList, rootPublicKey, notes) {
+  if (revocationList == null) return REVOCATION_NOT_CHECKED;
+
+  const expected = _computeRevocationListHash({
+    deployer_id: revocationList.deployer_id,
+    entries: revocationList.entries.map(e => e.toDict()),
+    issued_at: revocationList.issued_at,
+    list_version: revocationList.list_version,
+    root_key_id: revocationList.root_key_id,
+  });
+  if (expected !== revocationList.list_hash) {
+    notes.push('revocation list_hash mismatch: list has been tampered with');
+    return REVOCATION_LIST_INVALID;
+  }
+
+  if (manifest !== null && revocationList.deployer_id !== manifest.deployer_id) {
+    notes.push(
+      `revocation list deployer_id '${revocationList.deployer_id}' does not `
+      + `match manifest deployer_id '${manifest.deployer_id}'`
+    );
+    return REVOCATION_LIST_INVALID;
+  }
+
+  if (revocationList.root_signature !== null && rootPublicKey != null) {
+    let ok = false;
+    try {
+      ok = DeploymentKeyPair.verify(
+        rootPublicKey,
+        Buffer.from(revocationList.list_hash, 'ascii'),
+        Buffer.from(revocationList.root_signature, 'base64'),
+      );
+    } catch (e) {
+      notes.push(`revocation list root_signature parse raised: ${e.name}`);
+    }
+    if (!ok) {
+      notes.push('revocation list root_signature INVALID');
+      return REVOCATION_LIST_INVALID;
+    }
+  }
+
+  const entry = revocationList.findEntry(certificate.key_id);
+  if (entry === null) return REVOCATION_NOT_REVOKED;
+
+  const certTs = _parseIso8601Safe(certificate.timestamp);
+  const revokedTs = _parseIso8601Safe(entry.revoked_at);
+  if (certTs === null || revokedTs === null) {
+    notes.push(
+      `key ${entry.key_id} is revoked and timestamps are unparseable; `
+      + 'treating cert as post-revocation (conservative)'
+    );
+    return REVOCATION_REVOKED;
+  }
+  if (certTs.getTime() >= revokedTs.getTime()) {
+    notes.push(
+      `key ${entry.key_id} revoked at ${entry.revoked_at} `
+      + `(reason: ${entry.reason}); cert signed at ${certificate.timestamp}`
+    );
+    return REVOCATION_REVOKED;
+  }
+  notes.push(
+    `key ${entry.key_id} was revoked at ${entry.revoked_at} but this cert `
+    + `predates revocation (${certificate.timestamp}); cert remains valid`
+  );
+  return REVOCATION_REVOKED_BUT_CERT_PREDATES;
 }
 
 module.exports = {
@@ -875,4 +1190,14 @@ module.exports = {
   PROVENANCE_VERIFIED,
   PROVENANCE_FAILED,
   PROVENANCE_UNVERIFIED,
+  // v0.9.0 RV-1 / RV-2
+  RevocationEntry,
+  RevocationList,
+  deriveRevocationList,
+  REVOCATION_LIST_SCHEMA_VERSION,
+  REVOCATION_NOT_REVOKED,
+  REVOCATION_REVOKED,
+  REVOCATION_REVOKED_BUT_CERT_PREDATES,
+  REVOCATION_NOT_CHECKED,
+  REVOCATION_LIST_INVALID,
 };
