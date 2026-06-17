@@ -138,6 +138,80 @@ class Shield {
   }
 
   /**
+   * v0.10.0 A50-2: write a content_generation audit event for EU AI Act
+   * Article 50 transparency record-keeping. Mirror of Py
+   * Shield.record_content_generation.
+   *
+   * Records that synthetic content was generated, by which system, and
+   * whether a machine-readable AI-generation label / deep-fake disclosure
+   * was applied -- WITHOUT the content ever entering CloakLLM. The caller
+   * hashes their own bytes and passes the digest as `contentHash`; CloakLLM
+   * never sees the asset (the no-content-in-logs invariant, the Article 12
+   * guarantee extended to Article 50). In compliance mode the event also
+   * satisfies Article 12 / 19 (article_ref=[Art_12,Art_19,Art_50]).
+   *
+   * @param {Object} options
+   * @param {string} options.modality            text | image | audio | video
+   * @param {boolean} [options.synthetic=true]   artificially generated?
+   * @param {boolean} [options.labeled=false]    machine-readable label applied?
+   * @param {string} [options.disclosureMethod='none']  c2pa | watermark | metadata | visible_notice | none
+   * @param {boolean} [options.deepfake=false]   Article 50(4) deep-fake trigger
+   * @param {string|null} [options.c2paManifestHash=null]  forward-compat hook; null in v0.10.0
+   * @param {string|null} [options.contentHash=null]  SHA-256 of asset, caller-computed, PII-safe
+   * @param {string|null} [options.model=null]   model identifier
+   * @param {string|null} [options.provider=null]  provider (anthropic, openai, ...)
+   * @param {string|null} [options.decisionId=null]  per-inference anchor; default fresh ULID
+   */
+  recordContentGeneration({
+    modality,
+    synthetic = true,
+    labeled = false,
+    disclosureMethod = 'none',
+    deepfake = false,
+    c2paManifestHash = null,
+    contentHash = null,
+    model = null,
+    provider = null,
+    decisionId = null,
+  } = {}) {
+    const VALID_MODALITY = new Set(['text', 'image', 'audio', 'video']);
+    const VALID_DISCLOSURE = new Set([
+      'c2pa', 'watermark', 'metadata', 'visible_notice', 'none',
+    ]);
+    if (!VALID_MODALITY.has(modality)) {
+      throw new RangeError(
+        `modality must be one of [${[...VALID_MODALITY].sort().join(', ')}] ` +
+        `(got ${JSON.stringify(modality)})`
+      );
+    }
+    if (!VALID_DISCLOSURE.has(disclosureMethod)) {
+      throw new RangeError(
+        `disclosureMethod must be one of [${[...VALID_DISCLOSURE].sort().join(', ')}] ` +
+        `(got ${JSON.stringify(disclosureMethod)})`
+      );
+    }
+    const resolvedDecisionId = decisionId || generateUlid();
+    this.audit.log({
+      eventType: 'content_generation',
+      model,
+      provider,
+      contentContext: {
+        modality,
+        synthetic: Boolean(synthetic),
+        labeled: Boolean(labeled),
+        disclosure_method: disclosureMethod,
+        deepfake: Boolean(deepfake),
+        c2pa_manifest_hash: c2paManifestHash,
+        content_hash: contentHash,
+      },
+      decisionId: resolvedDecisionId,
+      systemVersionPin: _composeSystemVersionPin(
+        model, this.config.deploymentVersion, this.config.instructionVersion,
+      ),
+    });
+  }
+
+  /**
    * v0.9.0 RV-3: write an ADVISORY key_revoked event to the audit chain.
    * NOT the security boundary -- the root-signed out-of-band
    * RevocationList is. Mirror of Py Shield.record_key_revocation.

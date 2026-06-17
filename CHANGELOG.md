@@ -5,6 +5,21 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-06-17
+
+Mirror of cloakllm-py 0.10.0. **Headline: EU AI Act Article 50 content-labeling compliance record-keeping.** Cross-SDK byte-equivalent: the `EU_AI_Act_Art_50` rollup and `label_coverage_pct` (int when whole, 2dp on fractions) match Python exactly.
+
+### Added
+- **`content_generation` audit event** + `content_context` validation (A50-1): closed whitelists for `modality` (text|image|audio|video) and `disclosure_method` (c2pa|watermark|metadata|visible_notice|none), bool/hash typing, NUL/oversize rejection, the no-content-in-logs invariant (a `content`/`text`/`output`/etc. key is a hard rejection), and event_type coupling (the field may ONLY appear on `content_generation` events).
+- **`Shield.recordContentGeneration({...})`** (A50-2). The asset never reaches CloakLLM; pass a caller-computed `contentHash`. `article_ref=[Art_12,Art_19,Art_50]` in compliance mode.
+- **Article 50 report rollup** (A50-3): `generation_events`, `labeled_events`, `label_coverage_pct`, `deepfake_events`, `modality_distribution` -- attached ONLY to the Art_50 row (the Art_4a-only invariant, applied to Article 50). Merge-not-replace fill.
+- **Verdict extension** (A50-4): any unlabeled synthetic-content event flips the report to NON_COMPLIANT.
+- **TypeScript declarations** for `recordContentGeneration` (and the previously-undeclared `recordKeyRevocation`).
+
+### Compatibility
+- **Drop-in safe from v0.9.0.** Additive only; pre-v0.10.0 chains have no Art_50 row. All v0.6.1+ chains verify.
+- 640 -> 687 tests (+47).
+
 ## [0.9.0] - 2026-06-10
 
 Mirror of cloakllm-py 0.9.0. **Headline: Key Revocation.** Cross-SDK byte-equivalent `list_hash` verified (`ead04756...` matches Py for fixed-input test).

@@ -213,6 +213,21 @@ export class Shield {
     includeDecisions?: boolean;
   }): ComplianceReportV080 | string;
   verifyCertificate(certificate: SanitizationCertificate | Record<string, any>, publicKey?: Buffer | null): boolean;
+  /** v0.9.0 RV-3: write an ADVISORY key_revoked audit event (NOT the security boundary). */
+  recordKeyRevocation(keyId: string, reason: 'compromised' | 'superseded' | 'ceased_operation' | 'unspecified', revokedAt?: string | null): void;
+  /** v0.10.0 A50-2: write a content_generation audit event for EU AI Act Article 50 record-keeping. */
+  recordContentGeneration(options: {
+    modality: 'text' | 'image' | 'audio' | 'video';
+    synthetic?: boolean;
+    labeled?: boolean;
+    disclosureMethod?: 'c2pa' | 'watermark' | 'metadata' | 'visible_notice' | 'none';
+    deepfake?: boolean;
+    c2paManifestHash?: string | null;
+    contentHash?: string | null;
+    model?: string | null;
+    provider?: string | null;
+    decisionId?: string | null;
+  }): void;
   static generateAttestationKey(): DeploymentKeyPair;
 }
 

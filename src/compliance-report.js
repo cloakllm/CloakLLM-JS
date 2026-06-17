@@ -18,6 +18,23 @@ const _BIAS_EVENT_TYPES = new Set([
   'bias_session_start', 'bias_pseudonymise', 'bias_finding', 'bias_session_end',
 ]);
 
+// v0.10.0 A50-3: Article 50 content-labeling event type + the article whose
+// row the content-labeling stats attach to (and ONLY that row).
+const _CONTENT_GENERATION_EVENT_TYPE = 'content_generation';
+const _ART_50 = 'EU_AI_Act_Art_50';
+
+/**
+ * Percentage rounded to 2 dp, emitted as int when whole. JS numbers
+ * stringify whole values without a decimal automatically, so
+ * Math.round(10000*n/d)/100 yields the same canonical-JSON bytes Python's
+ * int-when-whole `_pct` produces (the v0.7.0 cross-SDK numeric-divergence
+ * lesson). Returns 0 when denominator is 0.
+ */
+function _pct(numerator, denominator) {
+  if (!denominator) return 0;
+  return Math.round(10000 * numerator / denominator) / 100;
+}
+
 function _inPeriod(ts, periodFrom, periodTo) {
   if (!ts) return false;
   if (periodFrom && ts < periodFrom) return false;
@@ -222,6 +239,13 @@ function buildReport({
   const biasFindingCounts = {};
   const biasEndCounts = {};
   const biasEndWiped = {};
+  // v0.10.0 A50-3: content-generation bookkeeping (Article 50). Accumulated
+  // per-article like bias, wired ONLY onto the Art_50 row below (same
+  // correctness invariant -- content stats must not appear on Art_12/19).
+  const contentGenCounts = {};       // article -> count of content_generation
+  const contentLabeledCounts = {};   // article -> count labeled=true
+  const contentDeepfakeCounts = {};  // article -> count deepfake=true
+  const contentModalityCounts = {};  // article -> {modality: count}
   const articleDecisions = {};  // article -> Set<decisionId>
 
   for (const entry of auditEntries) {
@@ -277,6 +301,23 @@ function buildReport({
           if ((entry.bias_context || {}).wipe_confirmed === true) {
             biasEndWiped[art] = (biasEndWiped[art] || 0) + 1;
           }
+        }
+      } else if (evType === _CONTENT_GENERATION_EVENT_TYPE) {
+        // v0.10.0 A50-3: content_generation bookkeeping (Article 50).
+        contentGenCounts[art] = (contentGenCounts[art] || 0) + 1;
+        const cc = entry.content_context || {};
+        if (cc.labeled === true) {
+          contentLabeledCounts[art] = (contentLabeledCounts[art] || 0) + 1;
+        }
+        if (cc.deepfake === true) {
+          contentDeepfakeCounts[art] = (contentDeepfakeCounts[art] || 0) + 1;
+        }
+        const modality = cc.modality;
+        // AUDIT-3: only count a string modality (malformed entries skipped).
+        if (typeof modality === 'string' && modality) {
+          if (!contentModalityCounts[art]) contentModalityCounts[art] = {};
+          contentModalityCounts[art][modality] =
+            (contentModalityCounts[art][modality] || 0) + 1;
         }
       }
     }
@@ -339,6 +380,32 @@ function buildReport({
       ends > 0 ? Math.round(1000 * wiped / ends) / 10 : 0.0;
   }
 
+  // v0.10.0 A50-3: wire content-labeling fields ONLY onto the Article 50 row.
+  // content_generation events carry article_ref=[Art_12,Art_19,Art_50], so the
+  // naive "attach to every article that saw the event" would mislead an
+  // auditor reading the Article 12 section into thinking Article 12 mandates
+  // content labeling. It mandates LOGGING; content labeling is one event type
+  // logged. The rollup belongs on Art_50's row alone (the bias/Art_4a
+  // correctness invariant, applied to Article 50).
+  if (_ART_50 in finalArticleStats && _ART_50 in contentGenCounts) {
+    const gen = contentGenCounts[_ART_50];
+    const labeled = contentLabeledCounts[_ART_50] || 0;
+    const modalities = contentModalityCounts[_ART_50] || {};
+    // Object.assign (merge, not replace) -- never clobber evidence_event_count
+    // / decision_count already on the row (the KM-9 / RV-4 fix discipline).
+    Object.assign(finalArticleStats[_ART_50], {
+      generation_events: gen,
+      labeled_events: labeled,
+      label_coverage_pct: _pct(labeled, gen),
+      deepfake_events: contentDeepfakeCounts[_ART_50] || 0,
+      // sorted keys so canonical JSON is byte-equivalent with Python's
+      // dict(sorted(...)) ordering.
+      modality_distribution: Object.fromEntries(
+        Object.keys(modalities).sort().map(k => [k, modalities[k]])
+      ),
+    });
+  }
+
   // Verdict
   const verdictReasons = [];
   if (!chainValid) {
@@ -351,6 +418,22 @@ function buildReport({
     verdictReasons.push(
       `attestation: ${signaturesValid}/${entriesWithCerts} signatures valid`
     );
+  }
+  // v0.10.0 A50-4: Article 50 unlabeled-content check. Any synthetic-content
+  // generation event without a machine-readable AI-generation label is an
+  // Article 50(2) finding. v0.10.0 is strict -- no grace tolerance (a
+  // labelCoverageThreshold config is a v0.10.1 add IF a user needs the
+  // Article 50(2) "technically infeasible" carve-out). Pre-v0.10.0 chains
+  // have no Art_50 row, so this is purely additive (zero behavior change).
+  const art50 = finalArticleStats[_ART_50];
+  if (art50 && 'generation_events' in art50) {
+    const gen = art50.generation_events;
+    const labeled = art50.labeled_events;
+    if (gen && labeled < gen) {
+      verdictReasons.push(
+        `per_article.${_ART_50}: ${gen - labeled} of ${gen} generation events unlabeled`
+      );
+    }
   }
   const verdict = verdictReasons.length === 0 ? 'COMPLIANT' : 'NON_COMPLIANT';
 
@@ -477,6 +560,19 @@ function renderMarkdown(report) {
         lines.push(`- Article 4a bias sessions: **${stats.bias_sessions}**`);
         lines.push(`- Bias findings recorded: **${stats.findings_recorded || 0}**`);
         lines.push(`- Token-map wipe confirmed: **${stats.wipe_confirmed_pct || 0}%**`);
+      }
+      // v0.10.0 A50-3: Article 50 content-labeling rollup.
+      if ('generation_events' in stats) {
+        lines.push(`- Article 50 generation events: **${stats.generation_events}**`);
+        lines.push(`- Labeled events: **${stats.labeled_events || 0}**`);
+        lines.push(`- Label coverage: **${stats.label_coverage_pct || 0}%**`);
+        lines.push(`- Deep-fake disclosures: **${stats.deepfake_events || 0}**`);
+        const md = stats.modality_distribution || {};
+        if (Object.keys(md).length > 0) {
+          const mdStr = Object.entries(md).sort()
+            .map(([m, n]) => `${m}=${n}`).join(', ');
+          lines.push(`- Modality distribution: ${mdStr}`);
+        }
       }
       lines.push('');
     }

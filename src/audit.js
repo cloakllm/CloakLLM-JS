@@ -41,6 +41,8 @@ const _ENTRY_ALLOWED_KEYS = new Set([
   'system_version_pin',
   // v0.8.1 KM-3 -- Externally-Verifiable Key Provenance (key_registered events only)
   'key_manifest',
+  // v0.10.0 A50-1 -- Article 50 content-labeling (content_generation events only)
+  'content_context',
 ]);
 
 // v0.7.0 A4a-3: bias_context schema. See cloakllm-py audit.py for full rationale.
@@ -153,6 +155,135 @@ function _validateKeyManifest(km) {
       throw new Error(
         `AUDIT SCHEMA VIOLATION: key_manifest.${k} contains NUL byte.`
       );
+    }
+  }
+}
+
+// v0.10.0 A50-1: content_generation event + content_context field validation.
+// Mirrors cloakllm-py audit.py. content_context carries metadata + hashes
+// ONLY -- never the generated content itself (the no-PII-in-logs invariant
+// extends to Article 50 synthetic-content records).
+const _CONTENT_GENERATION_EVENT_TYPE = 'content_generation';
+const _CONTENT_CONTEXT_ALLOWED_KEYS = new Set([
+  'modality', 'synthetic', 'labeled', 'disclosure_method',
+  'deepfake', 'c2pa_manifest_hash', 'content_hash',
+]);
+const _CONTENT_CONTEXT_REQUIRED_KEYS = new Set([
+  'modality', 'synthetic', 'labeled', 'disclosure_method', 'deepfake',
+]);
+const _CONTENT_MODALITY_WHITELIST = new Set(['text', 'image', 'audio', 'video']);
+const _CONTENT_DISCLOSURE_WHITELIST = new Set([
+  'c2pa', 'watermark', 'metadata', 'visible_notice', 'none',
+]);
+const _CONTENT_CONTEXT_BOOL_FIELDS = new Set(['synthetic', 'labeled', 'deepfake']);
+const _CONTENT_CONTEXT_STR_MAX_LEN = {
+  modality: 16,
+  disclosure_method: 32,
+  c2pa_manifest_hash: 128,
+  content_hash: 128,
+};
+// Keys that would smuggle the generated content into the log. Recording a
+// hash is the whole point -- the content never enters CloakLLM. A
+// content/text/output/etc. key is a hard rejection (defence-in-depth).
+const _CONTENT_CONTEXT_FORBIDDEN_KEYS = new Set([
+  'content', 'text', 'output', 'payload', 'body', 'data', 'asset',
+]);
+
+function _validateContentContext(ctx) {
+  if (!ctx || typeof ctx !== 'object' || Array.isArray(ctx)) {
+    throw new Error(
+      `AUDIT SCHEMA VIOLATION: content_context must be a plain object ` +
+      `(got ${Array.isArray(ctx) ? 'array' : typeof ctx}).`
+    );
+  }
+  for (const required of _CONTENT_CONTEXT_REQUIRED_KEYS) {
+    if (!(required in ctx)) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: content_context missing required field ` +
+        `${JSON.stringify(required)}.`
+      );
+    }
+  }
+  for (const k of Object.keys(ctx)) {
+    if (typeof k !== 'string') {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: content_context key ${JSON.stringify(k)} must be a string.`
+      );
+    }
+    if (_isPrototypePollutionKey(k)) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: content_context key ${JSON.stringify(k)} ` +
+        `is a prototype-pollution vector.`
+      );
+    }
+    // No-content invariant: reject any key that could carry the asset.
+    if (_CONTENT_CONTEXT_FORBIDDEN_KEYS.has(k)) {
+      throw new Error(
+        `COMPLIANCE VIOLATION: content_context contains forbidden field ` +
+        `${JSON.stringify(k)}. Audit logs must not contain generated content ` +
+        `-- record a content_hash, never the content itself.`
+      );
+    }
+    if (!_CONTENT_CONTEXT_ALLOWED_KEYS.has(k)) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: content_context contains disallowed key ` +
+        `${JSON.stringify(k)}. Allowed: ` +
+        `${Array.from(_CONTENT_CONTEXT_ALLOWED_KEYS).sort().join(', ')}.`
+      );
+    }
+    const v = ctx[k];
+    // Optional hash fields may be null.
+    if (v === null || v === undefined) {
+      if (_CONTENT_CONTEXT_REQUIRED_KEYS.has(k)) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: content_context.${k} must not be null.`
+        );
+      }
+      continue;
+    }
+    if (_CONTENT_CONTEXT_BOOL_FIELDS.has(k)) {
+      if (typeof v !== 'boolean') {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: content_context.${k} must be a boolean ` +
+          `(got ${typeof v}).`
+        );
+      }
+    } else if (k === 'modality') {
+      if (!_CONTENT_MODALITY_WHITELIST.has(v)) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: content_context.modality must be one of ` +
+          `${Array.from(_CONTENT_MODALITY_WHITELIST).sort().join(', ')} ` +
+          `(got ${JSON.stringify(v)}).`
+        );
+      }
+    } else if (k === 'disclosure_method') {
+      if (!_CONTENT_DISCLOSURE_WHITELIST.has(v)) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: content_context.disclosure_method must be ` +
+          `one of ${Array.from(_CONTENT_DISCLOSURE_WHITELIST).sort().join(', ')} ` +
+          `(got ${JSON.stringify(v)}).`
+        );
+      }
+    } else {
+      // c2pa_manifest_hash / content_hash: optional string, capped, no NUL.
+      if (typeof v !== 'string') {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: content_context.${k} must be a string ` +
+          `(got ${typeof v}).`
+        );
+      }
+      const limit = _CONTENT_CONTEXT_STR_MAX_LEN[k] || 128;
+      if (v.length > limit) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: content_context.${k} exceeds ${limit} chars ` +
+          `(got ${v.length}).`
+        );
+      }
+      if (v.includes('\x00')) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: content_context.${k} contains NUL byte.`
+        );
+      }
     }
   }
 }
@@ -515,6 +646,20 @@ function _validateAuditEntrySchema(entryData) {
       );
     }
   }
+
+  // v0.10.0 A50-1: content_context (content_generation events for Article 50
+  // transparency record-keeping). Same coupling pattern as key_manifest.
+  const contentContext = entryData.content_context;
+  if (contentContext !== null && contentContext !== undefined) {
+    _validateContentContext(contentContext);
+    const ev = entryData.event_type;
+    if (ev !== _CONTENT_GENERATION_EVENT_TYPE) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: content_context requires ` +
+        `event_type='${_CONTENT_GENERATION_EVENT_TYPE}' (got ${JSON.stringify(ev)}).`
+      );
+    }
+  }
 }
 
 /**
@@ -692,6 +837,7 @@ class AuditLogger {
     decisionId = null,
     systemVersionPin = null,
     keyManifest = null,
+    contentContext = null,
   }) {
     if (!this.config.auditEnabled) return null;
 
@@ -729,6 +875,8 @@ class AuditLogger {
       system_version_pin: systemVersionPin,
       // v0.8.1 KM-3: key_manifest -- only present on key_registered events
       key_manifest: keyManifest,
+      // v0.10.0 A50-1: content_context -- only present on content_generation events
+      content_context: contentContext,
     };
 
     // Compliance mode injection (v0.6.0) -- fields are part of the hash chain.
@@ -738,6 +886,11 @@ class AuditLogger {
       // v0.7.0 A4a-3: bias events additionally satisfy Article 4a.
       if (_BIAS_VALID_EVENT_TYPES.has(eventType)) {
         articleRefs.push('EU_AI_Act_Art_4a');
+      }
+      // v0.10.0 A50-1: content_generation events additionally constitute
+      // Article 50 transparency record-keeping evidence.
+      if (eventType === _CONTENT_GENERATION_EVENT_TYPE) {
+        articleRefs.push('EU_AI_Act_Art_50');
       }
       entryData.article_ref = articleRefs;
       entryData.retention_hint_days = this.config.retentionHintDays;
