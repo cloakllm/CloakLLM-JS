@@ -335,3 +335,67 @@ describe('A50-6 backward compatibility', () => {
     assert.equal(rep.verdict, 'COMPLIANT');
   });
 });
+
+
+// ===================================================================
+// v0.10.2 C1: cross-SDK _pct rounding parity (regression guard)
+// ===================================================================
+
+describe('C1 _pct rounding parity', () => {
+  function coverageFor(nLabeled, nTotal) {
+    const sh = makeShield();
+    for (let i = 0; i < nLabeled; i++) sh.recordContentGeneration({ modality: 'text', labeled: true });
+    for (let i = 0; i < nTotal - nLabeled; i++) sh.recordContentGeneration({ modality: 'text', labeled: false });
+    return sh.generateComplianceReport({ format: 'json' }).per_article.EU_AI_Act_Art_50.label_coverage_pct;
+  }
+
+  it('half-way boundary (1 of 800) rounds half up to 0.13 (matches Python)', () => {
+    // Was 0.13 in JS but 0.12 in Python under the old float path -> divergence.
+    assert.equal(coverageFor(1, 800), 0.13);
+  });
+
+  it('contract values match the Python _pct table exactly', () => {
+    // Same (n,d)->pct table asserted in the Python suite.
+    const cases = [[1, 3, 33.33], [2, 3, 66.67], [4, 5, 80], [1, 8, 12.5],
+      [7, 9, 77.78], [1, 16, 6.25], [3, 7, 42.86], [1, 1, 100]];
+    for (const [n, d, expected] of cases) {
+      assert.equal(coverageFor(n, d), expected, `${n}/${d}`);
+    }
+  });
+
+  it('whole percentage serializes as int (no trailing .0)', () => {
+    const cov = coverageFor(5, 5);
+    assert.equal(cov, 100);
+    assert.ok(Number.isInteger(cov));
+  });
+});
+
+
+// ===================================================================
+// v0.10.2 H1: Article 50 obligation applies to SYNTHETIC content only
+// ===================================================================
+
+describe('H1 synthetic-only scoping', () => {
+  it('non-synthetic unlabeled event is COMPLIANT (no labeling duty)', () => {
+    const sh = makeShield();
+    sh.recordContentGeneration({ modality: 'text', synthetic: false, labeled: false, disclosureMethod: 'none' });
+    const rep = sh.generateComplianceReport({ format: 'json' });
+    assert.equal(rep.verdict, 'COMPLIANT');
+    assert.ok(!('generation_events' in (rep.per_article.EU_AI_Act_Art_50 || {})));
+  });
+
+  it('synthetic unlabeled event is still NON_COMPLIANT', () => {
+    const sh = makeShield();
+    sh.recordContentGeneration({ modality: 'text', synthetic: true, labeled: false, disclosureMethod: 'none' });
+    assert.equal(sh.generateComplianceReport({ format: 'json' }).verdict, 'NON_COMPLIANT');
+  });
+
+  it('mixed chain counts synthetic events only', () => {
+    const sh = makeShield();
+    sh.recordContentGeneration({ modality: 'image', synthetic: true, labeled: true, disclosureMethod: 'c2pa' });
+    sh.recordContentGeneration({ modality: 'text', synthetic: false, labeled: false, disclosureMethod: 'none' });
+    const a50 = sh.generateComplianceReport({ format: 'json' }).per_article.EU_AI_Act_Art_50;
+    assert.equal(a50.generation_events, 1);
+    assert.equal(a50.label_coverage_pct, 100);
+  });
+});

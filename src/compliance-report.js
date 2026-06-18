@@ -24,15 +24,22 @@ const _CONTENT_GENERATION_EVENT_TYPE = 'content_generation';
 const _ART_50 = 'EU_AI_Act_Art_50';
 
 /**
- * Percentage rounded to 2 dp, emitted as int when whole. JS numbers
- * stringify whole values without a decimal automatically, so
- * Math.round(10000*n/d)/100 yields the same canonical-JSON bytes Python's
- * int-when-whole `_pct` produces (the v0.7.0 cross-SDK numeric-divergence
- * lesson). Returns 0 when denominator is 0.
+ * Percentage rounded to 2 dp (round half up), emitted as int when whole.
+ *
+ * v0.10.2 C1 fix: computed in EXACT INTEGER arithmetic. The old
+ * `Math.round(10000*n/d)/100` rounds half toward +Inf, while Python's
+ * `round(x,2)` uses banker's rounding (round-half-to-even) -- so the two
+ * diverged on any `.xx5` boundary (1 labeled of 800 -> JS 0.13 vs Py 0.12),
+ * silently breaking the cross-SDK byte-identical report guarantee. The
+ * integer form `(10000*n + floor(d/2)) idiv d` is deterministic and matches
+ * Python's `(10000*n + d//2)//d` exactly (Number is exact for these
+ * magnitudes). JS stringifies whole numbers without a decimal, so the
+ * int-when-whole behaviour is automatic. Returns 0 when denominator is 0.
  */
 function _pct(numerator, denominator) {
   if (!denominator) return 0;
-  return Math.round(10000 * numerator / denominator) / 100;
+  const centi = Math.floor((10000 * numerator + Math.floor(denominator / 2)) / denominator);
+  return centi / 100;
 }
 
 function _inPeriod(ts, periodFrom, periodTo) {
@@ -304,20 +311,28 @@ function buildReport({
         }
       } else if (evType === _CONTENT_GENERATION_EVENT_TYPE) {
         // v0.10.0 A50-3: content_generation bookkeeping (Article 50).
-        contentGenCounts[art] = (contentGenCounts[art] || 0) + 1;
+        // v0.10.2 H1 fix: the Article 50 labeling obligation applies to
+        // SYNTHETIC / AI-generated content only (Art 50(2)). A non-synthetic
+        // record (synthetic=false) carries no labeling duty, so it must NOT
+        // count toward the coverage stats or verdict -- otherwise an honest
+        // deployer logging non-AI provenance gets a false NON_COMPLIANT.
+        // Mirror of the Python gate.
         const cc = entry.content_context || {};
-        if (cc.labeled === true) {
-          contentLabeledCounts[art] = (contentLabeledCounts[art] || 0) + 1;
-        }
-        if (cc.deepfake === true) {
-          contentDeepfakeCounts[art] = (contentDeepfakeCounts[art] || 0) + 1;
-        }
-        const modality = cc.modality;
-        // AUDIT-3: only count a string modality (malformed entries skipped).
-        if (typeof modality === 'string' && modality) {
-          if (!contentModalityCounts[art]) contentModalityCounts[art] = {};
-          contentModalityCounts[art][modality] =
-            (contentModalityCounts[art][modality] || 0) + 1;
+        if (cc.synthetic === true) {
+          contentGenCounts[art] = (contentGenCounts[art] || 0) + 1;
+          if (cc.labeled === true) {
+            contentLabeledCounts[art] = (contentLabeledCounts[art] || 0) + 1;
+          }
+          if (cc.deepfake === true) {
+            contentDeepfakeCounts[art] = (contentDeepfakeCounts[art] || 0) + 1;
+          }
+          const modality = cc.modality;
+          // AUDIT-3: only count a string modality (malformed entries skipped).
+          if (typeof modality === 'string' && modality) {
+            if (!contentModalityCounts[art]) contentModalityCounts[art] = {};
+            contentModalityCounts[art][modality] =
+              (contentModalityCounts[art][modality] || 0) + 1;
+          }
         }
       }
     }

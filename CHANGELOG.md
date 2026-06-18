@@ -5,6 +5,16 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.2] - 2026-06-18
+
+Mirror of cloakllm-py 0.10.2 (there was no JS 0.10.1 — that was a Python-only dev-dependency patch). **Two correctness fixes in the v0.10.0 Article 50 report logic, found by a post-release adversarial review.** No API or schema change.
+
+### Fixed
+- **C1 (cross-SDK report divergence):** `label_coverage_pct` could differ from the Python SDK on a `.xx5` rounding boundary (JS `Math.round` rounds half up; Python `round()` uses banker's rounding) — e.g. 1 labeled of 800 → JS `0.13` vs Python `0.12`, breaking the byte-identical report guarantee. `_pct` now uses **exact integer arithmetic** (`Math.floor((10000*n + Math.floor(d/2))/d)`), identical to Python. Other coverage values unchanged.
+- **H1 (false NON_COMPLIANT on non-synthetic content):** the Article 50 rollup + verdict now count **synthetic events only** (`synthetic === true`). A `content_generation` event with `synthetic:false, labeled:false` no longer flips the verdict to NON_COMPLIANT — Article 50 labeling applies to AI-generated content only. Default usage (`synthetic:true`) is unchanged.
+
+Regression-guarded (+6 tests). Drop-in safe from 0.10.0.
+
 ## [0.10.0] - 2026-06-17
 
 Mirror of cloakllm-py 0.10.0. **Headline: EU AI Act Article 50 content-labeling compliance record-keeping.** Cross-SDK byte-equivalent: the `EU_AI_Act_Art_50` rollup and `label_coverage_pct` (int when whole, 2dp on fractions) match Python exactly.
