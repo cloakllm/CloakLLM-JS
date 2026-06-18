@@ -268,7 +268,12 @@ describe('CR8 AUDIT-3 adversarial inputs', () => {
 
   it('does not crash on malformed entries', () => {
     const r = buildReport({auditEntries: adversarial, cloakllmVersion: '0.8.0'});
-    assert.equal(r.verdict, 'COMPLIANT');
+    // v0.10.3 MEDIUM-6: the adversarial set includes a pii_in_log=true entry
+    // (seq 5) with empty article_ref. Before the fix this was silently ignored
+    // (no per_article row -> verdict stayed COMPLIANT) -- the exact bug. The
+    // no-PII-in-logs invariant is global, so it must now read NON_COMPLIANT.
+    assert.equal(r.verdict, 'NON_COMPLIANT');
+    assert.ok(r.verdict_reasons.some(x => x.includes('pii_in_log=true')));
     assert.equal(r.chain_integrity.total_entries, 2);
   });
 
@@ -342,5 +347,51 @@ describe('CR8-9 compliance_summary v0.8.0 fields', () => {
   it('compliance_reporting_available is true', () => {
     const { shield } = makeShield();
     assert.equal(shield.complianceSummary().config_snapshot.compliance_reporting_available, true);
+  });
+});
+
+
+// ===================================================================
+// v0.10.3: cross-SDK parity for wipe_confirmed_pct (routes through _pct now;
+// regression guard against the banker's-vs-half-up + 1dp-vs-2dp divergence).
+// ===================================================================
+
+function _biasEntry(seq, etype, bc) {
+  return {
+    seq, event_id: 'e' + seq, timestamp: '2026-05-01T10:00:0' + (seq % 10) + '.000000+00:00',
+    event_type: etype, model: null, provider: null, entity_count: 0, categories: {},
+    tokens_used: [], prompt_hash: '', sanitized_hash: '', latency_ms: 0, mode: null,
+    entity_details: [], timing: null, certificate_hash: null, key_id: null,
+    prev_hash: '0'.repeat(64), entry_hash: 'x', metadata: {}, risk_assessment: null,
+    article_ref: ['EU_AI_Act_Art_12', 'EU_AI_Act_Art_19', 'EU_AI_Act_Art_4a'],
+    decision_id: 'd' + seq, bias_context: bc,
+  };
+}
+
+describe('v0.10.3 wipe_confirmed_pct parity', () => {
+  it('fractional wipe (1 of 3) is 33.33, matching Python (was 33.3)', () => {
+    const entries = [
+      _biasEntry(0, 'bias_session_start', { session_id: 's0', purpose: 'audit' }),
+      _biasEntry(1, 'bias_session_start', { session_id: 's1', purpose: 'audit' }),
+      _biasEntry(2, 'bias_session_start', { session_id: 's2', purpose: 'audit' }),
+      _biasEntry(3, 'bias_session_end', { session_id: 's0', wipe_confirmed: true }),
+      _biasEntry(4, 'bias_session_end', { session_id: 's1', wipe_confirmed: false }),
+      _biasEntry(5, 'bias_session_end', { session_id: 's2', wipe_confirmed: false }),
+    ];
+    const rep = buildReport({ auditEntries: entries, periodFrom: null, periodTo: null,
+      chainValid: true, chainAnomalies: [], cloakllmVersion: '0.10.3' });
+    assert.equal(rep.per_article.EU_AI_Act_Art_4a.wipe_confirmed_pct, 33.33);
+  });
+
+  it('full wipe is int 100 (serializes without .0)', () => {
+    const entries = [
+      _biasEntry(0, 'bias_session_start', { session_id: 's0', purpose: 'audit' }),
+      _biasEntry(1, 'bias_session_end', { session_id: 's0', wipe_confirmed: true }),
+    ];
+    const rep = buildReport({ auditEntries: entries, periodFrom: null, periodTo: null,
+      chainValid: true, chainAnomalies: [], cloakllmVersion: '0.10.3' });
+    const v = rep.per_article.EU_AI_Act_Art_4a.wipe_confirmed_pct;
+    assert.equal(v, 100);
+    assert.ok(Number.isInteger(v));
   });
 });

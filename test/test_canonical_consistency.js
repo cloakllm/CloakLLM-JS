@@ -65,16 +65,28 @@ describe('canonicalJson — error handling', () => {
 });
 
 describe('canonicalJson — prototype-pollution defense', () => {
-  it('skips __proto__ key', () => {
-    const out = canonicalJson({ __proto__: { polluted: true }, a: 1 });
-    assert.ok(!out.includes('__proto__'));
-    assert.ok(!out.includes('polluted'));
-    assert.equal(out, '{"a":1}');
+  // v0.10.3 HIGH-5: these key names are now REJECTED (hard error) rather than
+  // silently dropped. Silent-drop diverged from Python (which serialized them)
+  // and was itself a forgery seam (the dropped key is invisible in the hash).
+  // Both SDKs now throw, keeping the canonicalizers in lock-step.
+  it('throws on an own __proto__ key (as produced by JSON.parse)', () => {
+    // Object-literal `{__proto__: x}` sets the prototype, not an own key, so
+    // the real data path is JSON.parse, which makes __proto__ an own property.
+    const obj = JSON.parse('{"__proto__": {"polluted": true}, "a": 1}');
+    assert.throws(() => canonicalJson(obj), /disallowed object key/);
   });
 
-  it('skips constructor key', () => {
-    const out = canonicalJson({ constructor: 'evil', a: 1 });
-    assert.equal(out, '{"a":1}');
+  it('throws on a constructor key', () => {
+    assert.throws(() => canonicalJson({ constructor: 'evil', a: 1 }), /disallowed object key/);
+  });
+
+  it('throws on a prototype key', () => {
+    assert.throws(() => canonicalJson({ prototype: 1, a: 1 }), /disallowed object key/);
+  });
+
+  it('throws on a nested forbidden key', () => {
+    assert.throws(() => canonicalJson({ a: { b: JSON.parse('{"constructor": 1}') } }),
+      /disallowed object key/);
   });
 });
 

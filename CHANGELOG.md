@@ -5,6 +5,20 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.3] - 2026-06-18
+
+Mirror of cloakllm-py 0.10.3 — **compliance-report integrity release** (six bugs found by a deep audit + security review, all fixed + regression-guarded). No public API change.
+
+### Fixed
+- **CRITICAL-1** — `generateComplianceReport()` now actually runs `verifyChain()` and reports `NON_COMPLIANT` / `chain_integrity: broken` on a tampered log (was presumed-valid → false "verified / COMPLIANT").
+- **CRITICAL-2** — removed the dead `signaturesValid < entriesWithCerts` verdict guard that falsely implied per-signature verification (the log stores only a cert hash). Attestation verdict now comes from KeyManifest provenance.
+- **HIGH-3** — `buildReport` no longer corrupts aggregates on malformed `categories` (non-object, or non-integer counts are skipped).
+- **HIGH-4** — `context-analyzer` `token_density`/`risk_score` now use a shared int-when-whole 3dp helper, byte-identical with Python in the audit hash chain (was `Math.round` half-up + int `0`/`1` vs Python float `0.0`/`1.0`).
+- **HIGH-5** — `canonicalJson` now **rejects** `__proto__`/`constructor`/`prototype` keys (was silently dropping them, which diverged from Python and hid the key from the hash).
+- **MEDIUM-6** — an `articles` filter can no longer hide a `pii_in_log=true` violation; the invariant is evaluated globally.
+
+JS 687 → 719 tests (+32, incl. `test_v0103_audit_fixes.js`). Drop-in safe from 0.10.x.
+
 ## [0.10.2] - 2026-06-18
 
 Mirror of cloakllm-py 0.10.2 (there was no JS 0.10.1 — that was a Python-only dev-dependency patch). **Two correctness fixes in the v0.10.0 Article 50 report logic, found by a post-release adversarial review.** No API or schema change.

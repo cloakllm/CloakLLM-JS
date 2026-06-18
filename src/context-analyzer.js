@@ -14,6 +14,18 @@
 
 'use strict';
 
+/**
+ * v0.10.3 HIGH-4: cross-SDK-identical 3dp rounding for the risk-assessment
+ * floats that land in the audit hash chain. Mirror of Python's
+ * `_round3_canonical`: half-up integer flooring (`floor(x*1000 + 0.5)/1000`,
+ * pure IEEE-754 so it matches Python bit-for-bit) with automatic int-when-whole
+ * on serialization. Replaces `Math.round(x*1000)/1000`, which rounded half-up
+ * but diverged from Python's banker's-rounding `round(x,3)` on .xxxx5 ties.
+ */
+function _round3Canonical(x) {
+  return Math.floor(x * 1000 + 0.5) / 1000;
+}
+
 const TOKEN_RE = /\[[A-Z][A-Z0-9_]*_(?:\d+|REDACTED)\]/gi;
 
 const IDENTIFYING_DESCRIPTORS = new Set([
@@ -98,10 +110,10 @@ class ContextAnalyzer {
         const riskLevel = riskScore > 0.7 ? 'high' : riskScore > 0.3 ? 'medium' : 'low';
 
         return {
-            token_density: Math.round(tokenDensity * 1000) / 1000,
+            token_density: _round3Canonical(tokenDensity),
             identifying_descriptors: descriptorCount,
             relationship_edges: relationshipCount,
-            risk_score: Math.round(riskScore * 1000) / 1000,
+            risk_score: _round3Canonical(riskScore),
             risk_level: riskLevel,
             warnings: warnings.slice(0, 5),
         };

@@ -182,9 +182,11 @@ function _fillProvenanceSummary({ auditEntries, periodFrom, periodTo, attestatio
   Object.assign(attestation.provenance_summary, {
     manifests_found: Object.keys(manifestsByKeyId).length,
     manifests_valid: manifestsValid,
-    within_validity_window_pct: withinWindowTotal === 0
-      ? 0.0
-      : Math.round(10000 * withinWindowN / withinWindowTotal) / 100,
+    // v0.10.3 C1-class fix: _pct (exact integer arithmetic) instead of
+    // Math.round half-up, so it is byte-identical with Python's _pct on
+    // .xx5 boundaries. Returns 0 for a zero denominator (matches the old
+    // `=== 0 ? 0.0` branch, which serialized as 0).
+    within_validity_window_pct: _pct(withinWindowN, withinWindowTotal),
     root_signature_status_distribution: rootDistribution,
   });
 }
@@ -211,6 +213,8 @@ function buildReport({
   auditDir = null,
   includeDecisions = false,
   revocationList = null,
+  chainValid = true,
+  chainAnomalies: chainAnomaliesArg = null,
 }) {
   // v0.8.1 KM-9: materialise once so we can rewalk for provenance_summary
   // without forcing callers to buffer themselves.
@@ -219,12 +223,19 @@ function buildReport({
 
   const articleStats = {};
   const decisionStats = {};
-  const chainAnomalies = [];
+  // v0.10.3 CRITICAL-1 fix: chainValid + chainAnomalies are threaded in from
+  // the caller (Shield.generateComplianceReport runs verifyChain). The
+  // default true keeps the pure-function path usable by unit tests with
+  // synthetic fixed-hash fixtures, but the PUBLIC API always passes the real
+  // verifyChain result so a tampered log reports broken / NON_COMPLIANT.
+  const chainAnomalies = Array.isArray(chainAnomaliesArg) ? [...chainAnomaliesArg] : [];
 
   let firstTs = null;
   let lastTs = null;
   let totalEntries = 0;
-  const chainValid = true;  // caller has already verified; future: integrate
+  // v0.10.3 MEDIUM-6: set when ANY in-period entry has pii_in_log=true,
+  // independent of the article filter (the invariant is global).
+  let globalPiiViolation = false;
 
   let entriesWithCerts = 0;
   let signaturesValid = 0;
@@ -273,21 +284,35 @@ function buildReport({
     // v0.8.0 AUDIT-3: coerce to array -- a non-array article_ref must not
     // make .some()/.includes() crash on hand-crafted malformed entries.
     const entryArticles = Array.isArray(entry.article_ref) ? entry.article_ref : [];
+
+    // v0.10.3 MEDIUM-6: the no-PII-in-logs invariant is GLOBAL -- check it on
+    // every in-period entry BEFORE the article filter, so scoping a report to
+    // one article can't hide a pii_in_log=true violation in an out-of-scope
+    // entry (false COMPLIANT).
+    if (entry.pii_in_log === true) {
+      globalPiiViolation = true;
+      chainAnomalies.push(`seq=${entry.seq}: COMPLIANCE VIOLATION pii_in_log=true`);
+    }
+
     if (articles && !entryArticles.some(a => articles.includes(a))) continue;
 
     totalEntries += 1;
 
+    // Per-article pii_in_log flag (in-scope rows only).
     if (entry.pii_in_log === true) {
       for (const a of entryArticles) ensureArticle(a).pii_in_log = true;
-      chainAnomalies.push(`seq=${entry.seq}: COMPLIANCE VIOLATION pii_in_log=true`);
     }
 
     for (const art of entryArticles) {
       const stats = ensureArticle(art);
       stats.evidence_event_count += 1;
 
-      const cats = entry.categories || {};
+      // v0.10.3 HIGH-3: AUDIT-3 hardening -- malformed categories (non-object,
+      // or non-integer counts) must not corrupt aggregates or crash.
+      const cats = (entry.categories && typeof entry.categories === 'object'
+        && !Array.isArray(entry.categories)) ? entry.categories : {};
       for (const [cat, cnt] of Object.entries(cats)) {
+        if (typeof cnt !== 'number' || !Number.isInteger(cnt)) continue;
         stats.categories_detected[cat] = (stats.categories_detected[cat] || 0) + cnt;
       }
 
@@ -351,8 +376,11 @@ function buildReport({
       const d = decisionStats[did];
       d.entry_count += 1;
       for (const art of entryArticles) d.articles_touched.add(art);
-      const cats = entry.categories || {};
+      // v0.10.3 HIGH-3: same categories hardening as the per-article loop.
+      const cats = (entry.categories && typeof entry.categories === 'object'
+        && !Array.isArray(entry.categories)) ? entry.categories : {};
       for (const [cat, cnt] of Object.entries(cats)) {
+        if (typeof cnt !== 'number' || !Number.isInteger(cnt)) continue;
         d.categories[cat] = (d.categories[cat] || 0) + cnt;
       }
       if (ts) {
@@ -391,8 +419,11 @@ function buildReport({
     finalArticleStats[ART_4A].findings_recorded = biasFindingCounts[ART_4A] || 0;
     const ends = biasEndCounts[ART_4A] || 0;
     const wiped = biasEndWiped[ART_4A] || 0;
-    finalArticleStats[ART_4A].wipe_confirmed_pct =
-      ends > 0 ? Math.round(1000 * wiped / ends) / 10 : 0.0;
+    // v0.10.3 C1-class fix: _pct (exact integer 2dp) instead of
+    // Math.round(1000*w/e)/10 (HALF-UP + only 1dp) -- the old path diverged
+    // from Python's round(...,2) on both precision and rounding mode. Now
+    // byte-identical via the shared _pct helper.
+    finalArticleStats[ART_4A].wipe_confirmed_pct = _pct(wiped, ends);
   }
 
   // v0.10.0 A50-3: wire content-labeling fields ONLY onto the Article 50 row.
@@ -421,25 +452,23 @@ function buildReport({
     });
   }
 
-  // Verdict
+  // --- Verdict (part 1: chain + PII + Article 50) ---
   const verdictReasons = [];
   if (!chainValid) {
     verdictReasons.push(`chain_integrity: broken (${chainAnomalies.length} anomalies)`);
   }
-  for (const [a, s] of Object.entries(finalArticleStats)) {
-    if (s.pii_in_log === true) verdictReasons.push(`per_article.${a}: pii_in_log=true`);
-  }
-  if (entriesWithCerts > 0 && signaturesValid < entriesWithCerts) {
+  // In-scope per-article PII rows (existing reason format).
+  const piiRows = Object.entries(finalArticleStats)
+    .filter(([, s]) => s.pii_in_log === true).map(([a]) => a);
+  for (const a of piiRows) verdictReasons.push(`per_article.${a}: pii_in_log=true`);
+  // v0.10.3 MEDIUM-6: a pii_in_log=true entry FILTERED OUT by the article
+  // scope (no per_article row) must still flip the verdict -- global invariant.
+  if (globalPiiViolation && piiRows.length === 0) {
     verdictReasons.push(
-      `attestation: ${signaturesValid}/${entriesWithCerts} signatures valid`
+      'no_pii_in_logs: pii_in_log=true on an out-of-scope in-period entry'
     );
   }
-  // v0.10.0 A50-4: Article 50 unlabeled-content check. Any synthetic-content
-  // generation event without a machine-readable AI-generation label is an
-  // Article 50(2) finding. v0.10.0 is strict -- no grace tolerance (a
-  // labelCoverageThreshold config is a v0.10.1 add IF a user needs the
-  // Article 50(2) "technically infeasible" carve-out). Pre-v0.10.0 chains
-  // have no Art_50 row, so this is purely additive (zero behavior change).
+  // v0.10.0 A50-4: Article 50 unlabeled-content check (strict).
   const art50 = finalArticleStats[_ART_50];
   if (art50 && 'generation_events' in art50) {
     const gen = art50.generation_events;
@@ -450,22 +479,26 @@ function buildReport({
       );
     }
   }
-  const verdict = verdictReasons.length === 0 ? 'COMPLIANT' : 'NON_COMPLIANT';
 
+  // Attestation block, built BEFORE finalising the verdict so the verdict can
+  // use the REAL, checkable attestation signal (KeyManifest provenance).
   const attestation = _emptyAttestation();
   attestation.entries_with_certificates = entriesWithCerts;
+  // v0.10.3 CRITICAL-2: `signatures_valid` is a COUNT of cert-bearing entries,
+  // NOT a per-signature verification. The log stores only a hash of each
+  // certificate, never the certificate, so signatures are not re-verifiable
+  // from the log alone. The old `signaturesValid < entriesWithCerts` verdict
+  // guard was dead code that falsely implied crypto verification; removed.
+  // The verifiable attestation signal is KeyManifest provenance (below).
   attestation.signatures_valid = signaturesValid;
   attestation.key_ids = [...keyIds].sort();
 
   // v0.8.1 KM-9: fill provenance_summary from key_registered events.
-  // Pre-v0.8.1 chains have no key_registered events -- provenance_summary
-  // stays all-null (additive back-compat with v0.8.0 reports).
   _fillProvenanceSummary({
     auditEntries: auditEntriesBuffered,
     periodFrom, periodTo,
     attestation,
   });
-
   // v0.9.0 RV-4: fill revocation rollup when a list was supplied.
   _fillRevocationSummary({
     auditEntries: auditEntriesBuffered,
@@ -473,6 +506,19 @@ function buildReport({
     attestation,
     revocationList,
   });
+
+  // --- Verdict (part 2: real attestation check) ---
+  // v0.10.3 CRITICAL-2: a KeyManifest that failed provenance verification IS a
+  // real, checkable NON_COMPLIANT condition (verifyKeyProvenance ran above).
+  const ps = attestation.provenance_summary || {};
+  if (Number.isInteger(ps.manifests_found) && Number.isInteger(ps.manifests_valid)
+      && ps.manifests_found > 0 && ps.manifests_valid < ps.manifests_found) {
+    verdictReasons.push(
+      `attestation: ${ps.manifests_valid}/${ps.manifests_found} key manifests passed provenance verification`
+    );
+  }
+
+  const verdict = verdictReasons.length === 0 ? 'COMPLIANT' : 'NON_COMPLIANT';
 
   const report = {
     report_metadata: {

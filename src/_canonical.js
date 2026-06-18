@@ -80,10 +80,25 @@ function canonicalJson(value) {
   }
 
   if (typeof value === 'object') {
-    // Reject prototype-pollution vectors and non-string keys early.
-    const keys = Object.keys(value).filter(
-      (k) => k !== '__proto__' && k !== 'constructor' && k !== 'prototype'
-    );
+    // v0.10.3 HIGH-5 (cross-SDK integrity): REJECT prototype-pollution key
+    // names rather than silently dropping them. The old `.filter(...)` here
+    // dropped `__proto__`/`constructor`/`prototype` from the output, but
+    // Python's `json.dumps` serializes them as ordinary keys -- so the same
+    // logical object hashed to DIFFERENT bytes in the two SDKs (breaking
+    // cross-SDK verifyChain and the "one canonicalizer" invariant), and a
+    // silently-dropped key is invisible in the hash (a forgery seam). These
+    // names never occur in legitimate hashed/attestation data (the audit
+    // schema validators reject them upstream; attestation payloads use fixed
+    // field names), so a hard error is safe and symmetric with Python.
+    const keys = Object.keys(value);
+    for (const k of keys) {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') {
+        throw new Error(
+          `canonicalJson: disallowed object key ${JSON.stringify(k)} ` +
+          `(prototype-pollution vector; not permitted in canonical output)`
+        );
+      }
+    }
     // Lexicographic sort matching Python's `sort_keys=True` (str compare).
     keys.sort();
     const parts = [];

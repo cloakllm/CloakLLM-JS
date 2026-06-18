@@ -1011,6 +1011,12 @@ class Shield {
       );
     }
 
+    // v0.10.3 CRITICAL-1 fix: ACTUALLY verify the hash chain first. Was
+    // presumed-valid (buildReport hardcoded chainValid=true), so a tampered
+    // log produced a "verified / COMPLIANT" verdict. Now thread the real
+    // verifyChain result (verdict + anomalies) into buildReport.
+    const _chainResult = this.audit.verifyChain();
+
     // Read audit chain from logDir. v0.7.0 lesson: explicit utf-8.
     const auditDir = this.config.logDir;
     const entries = [];
@@ -1038,6 +1044,8 @@ class Shield {
       auditDir: auditDir || null,
       includeDecisions,
       revocationList,
+      chainValid: _chainResult.valid,
+      chainAnomalies: _chainResult.errors,
     });
 
     if (fmt === 'json') {
