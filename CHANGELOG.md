@@ -5,7 +5,7 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.11.5] - 2026-06-23
 
 ### Fixed
 - **StreamDesanitizer fidelity** (LOW — cosmetic, no PII leak): streamed desanitize now byte-equals batch desanitize for every chunking. When the user's text contained a literal `[CATEGORY_N]`-style token, sanitize escaped it to fullwidth brackets and the stream emitted the escaped sequence in fragments, so it leaked through fullwidth instead of being restored to `[…]`. The stream now buffers fullwidth brackets (`U+FF3B`/`U+FF3D`) across chunk boundaries. Token-injection prevention was unaffected. Regression-guarded by a streaming-vs-batch fuzz (`test/test_stream_fuzz.js`). Rides the next version bump.
