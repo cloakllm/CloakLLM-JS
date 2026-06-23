@@ -47,6 +47,18 @@ export interface ShieldConfigOptions {
   maxInputLength?: number;
   contextAnalysis?: boolean;
   contextRiskThreshold?: number;
+  /** v0.7.1: deployer-supplied component of AuditEntry.system_version_pin. Env: CLOAKLLM_DEPLOYMENT_VERSION. */
+  deploymentVersion?: string | null;
+  /** v0.7.1: deployer-supplied component of AuditEntry.system_version_pin. Env: CLOAKLLM_INSTRUCTION_VERSION. */
+  instructionVersion?: string | null;
+  /** v0.8.1 KM-3: deployer identity; with an attestation key, Shield emits a key_registered event. Env: CLOAKLLM_DEPLOYER_ID. */
+  deployerId?: string | null;
+  /** v0.8.1: KeyManifest key validity window start (ISO 8601). Env: CLOAKLLM_KEY_VALID_FROM. */
+  keyValidFrom?: string | null;
+  /** v0.8.1: KeyManifest key validity window end (ISO 8601). Env: CLOAKLLM_KEY_VALID_UNTIL. */
+  keyValidUntil?: string | null;
+  /** v0.9.0 RV-3: path to a root-signed RevocationList; Shield fail-hards if its own key is revoked. Env: CLOAKLLM_REVOCATION_LIST. */
+  revocationListPath?: string | null;
   /** v0.11.0 TS-3: RFC 3161 Time-Stamp Authority URL (https only). Env: CLOAKLLM_TSA_URL. */
   timestampAuthorityUrl?: string | null;
   /** v0.11.0 TS-3: auto-checkpoint every N audit entries (0 = off). Env: CLOAKLLM_TSA_INTERVAL. */
@@ -92,6 +104,18 @@ export class ShieldConfig {
   maxInputLength: number;
   contextAnalysis: boolean;
   contextRiskThreshold: number;
+  /** v0.7.1: deployer-supplied component of AuditEntry.system_version_pin. */
+  deploymentVersion: string | null;
+  /** v0.7.1: deployer-supplied component of AuditEntry.system_version_pin. */
+  instructionVersion: string | null;
+  /** v0.8.1 KM-3: deployer identity for KeyManifest key_registered events. */
+  deployerId: string | null;
+  /** v0.8.1: KeyManifest key validity window start (ISO 8601). */
+  keyValidFrom: string | null;
+  /** v0.8.1: KeyManifest key validity window end (ISO 8601). */
+  keyValidUntil: string | null;
+  /** v0.9.0 RV-3: path to a root-signed RevocationList. */
+  revocationListPath: string | null;
   /** v0.11.0 TS-3: RFC 3161 Time-Stamp Authority URL (https only). */
   timestampAuthorityUrl: string | null;
   /** v0.11.0 TS-3: auto-checkpoint every N audit entries (0 = off). */
