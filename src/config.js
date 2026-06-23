@@ -225,6 +225,11 @@ class ShieldConfig {
     this.contextAnalysis = options.contextAnalysis ??
       (process.env.CLOAKLLM_CONTEXT_ANALYSIS ?? 'false').toLowerCase() === 'true';
     this.contextRiskThreshold = options.contextRiskThreshold ?? 0.7;
+    // v0.11.3: if true, an unavailable NER backend is a hard error instead of
+    // degrading to regex-only. Default false (NER is best-effort; regex still
+    // runs + a warning is emitted). Env: CLOAKLLM_NER_REQUIRED. Mirrors Python.
+    this.nerRequired = options.nerRequired ??
+      (process.env.CLOAKLLM_NER_REQUIRED ?? 'false').toLowerCase() === 'true';
 
     _validatePath(this.logDir, 'logDir', { strictPaths: this.auditStrictPaths });
     _validatePath(this.attestationKeyPath, 'attestationKeyPath', { strictPaths: this.auditStrictPaths });

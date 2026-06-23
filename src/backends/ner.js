@@ -9,14 +9,15 @@ const { DetectorBackend } = require('./base');
 const { NerDetector, isNerAvailable } = require('../ner-detector');
 
 class NerBackend extends DetectorBackend {
-  constructor() {
+  constructor(config) {
     super();
+    this._config = config || {};
     this._nerDetector = null;
     if (isNerAvailable()) {
       try {
         this._nerDetector = new NerDetector();
       } catch {
-        // compromise load failed
+        // compromise load failed -> degrade (handled in detect())
       }
     }
   }
@@ -39,7 +40,15 @@ class NerBackend extends DetectorBackend {
    * @returns {Array<import('../detector').Detection>}
    */
   detect(text, coveredSpans) {
-    if (!this._nerDetector) return [];
+    if (!this._nerDetector) {
+      // v0.11.3: fail-closed only when the deployment requires NER.
+      if (this._config.nerRequired) {
+        throw new Error(
+          'CloakLLM: NER is required (nerRequired=true) but unavailable '
+          + '(compromise not installed or failed to load).');
+      }
+      return [];  // best-effort: regex pass already ran
+    }
     return this._nerDetector.detect(text, coveredSpans);
   }
 }

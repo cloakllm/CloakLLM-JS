@@ -5,6 +5,17 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.3] - 2026-06-23
+
+Mirror of cloakllm-py 0.11.3. **Headline: NER `nerRequired` knob for cross-SDK parity.** The JS NER backend already degraded to regex-only when compromise was unavailable (fail-open); this adds the opt-in fail-closed switch so deployments that depend on NER can hard-fail instead.
+
+### Added
+- `ShieldConfig.nerRequired` (env `CLOAKLLM_NER_REQUIRED`, default `false`) — when `true`, an unavailable NER backend throws instead of degrading. Mirrors Python's `ner_required`. `NerBackend` now reads config; default behavior (degrade + warn) unchanged.
+- Regression tests for the degrade + hard-fail paths.
+
+### Note
+Re-aligned to 0.11.3 (py = js = mcp). `index.d.ts` updated.
+
 ## [0.11.2] - 2026-06-23
 
 Mirror of cloakllm-py 0.11.2. **Headline: detection hardening — close real PII leaks found by an honest benchmark.**

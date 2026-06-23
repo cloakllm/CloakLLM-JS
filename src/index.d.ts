@@ -47,6 +47,8 @@ export interface ShieldConfigOptions {
   maxInputLength?: number;
   contextAnalysis?: boolean;
   contextRiskThreshold?: number;
+  /** v0.11.3: if true, an unavailable NER backend is a hard error instead of degrading to regex-only. Default false. Env: CLOAKLLM_NER_REQUIRED. */
+  nerRequired?: boolean;
   /** v0.7.1: deployer-supplied component of AuditEntry.system_version_pin. Env: CLOAKLLM_DEPLOYMENT_VERSION. */
   deploymentVersion?: string | null;
   /** v0.7.1: deployer-supplied component of AuditEntry.system_version_pin. Env: CLOAKLLM_INSTRUCTION_VERSION. */
@@ -104,6 +106,8 @@ export class ShieldConfig {
   maxInputLength: number;
   contextAnalysis: boolean;
   contextRiskThreshold: number;
+  /** v0.11.3: hard-fail instead of degrading to regex-only when NER is unavailable. Default false. */
+  nerRequired: boolean;
   /** v0.7.1: deployer-supplied component of AuditEntry.system_version_pin. */
   deploymentVersion: string | null;
   /** v0.7.1: deployer-supplied component of AuditEntry.system_version_pin. */
