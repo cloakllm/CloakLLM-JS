@@ -5,6 +5,21 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.2] - 2026-06-23
+
+Mirror of cloakllm-py 0.11.2. **Headline: detection hardening — close real PII leaks found by an honest benchmark.**
+
+### Fixed (no-PII-invariant leaks — HIGH)
+- **Spaced / dashed credit cards** partially leaked + were mistyped as PHONE (`"4111 1111 1111 1111"` → `"[PHONE_0] 1111"`). CC regex now matches space/dash-grouped Visa/MC/Amex(4-6-5)/Discover via a back-referenced separator and claims the full span before PHONE.
+- **Spaced IBANs** leaked fragments because IBAN was ordered after PHONE; IBAN now precedes PHONE and captures the whole span.
+- **IPv6 addresses** were entirely undetected and leaked verbatim; `IP_ADDRESS` now matches IPv6 (ReDoS-safe) + IPv4.
+
+### Added
+- 18 detection regression tests (`test/test_detection_v0112.js`) asserting the fixes on `sanitize()` output. 735 → **753** tests.
+
+### Known limitations
+- Non-US national phone formats without an intl prefix need locale config; obfuscated PII is out of scope; PHONE still over-redacts some long digit runs (safe direction). Re-aligned to 0.11.2.
+
 ## [0.11.1] - 2026-06-23
 
 Mirror of cloakllm-py 0.11.1. **Headline: trusted-timestamping crypto hardening — OpenSSL-differential verification + DER fuzzing.**
