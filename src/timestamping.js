@@ -128,6 +128,44 @@ function _certValidAt(x509, genDate) {
   return nb <= genDate && genDate <= na;
 }
 
+// v0.11.1: the ESS signing-certificate attribute (RFC 3161 sec 2.4.1 / RFC
+// 5035) a conforming TSA MUST place in signerInfo, binding its signing cert by
+// hash. OpenSSL enforces it; we require + verify it to close a cert-
+// substitution surface and accept exactly what a conforming verifier accepts.
+const _OID_ESS_SIGNING_CERT_V2 = '1.2.840.113549.1.9.16.2.47'; // SigningCertificateV2
+const _OID_ESS_SIGNING_CERT_V1 = '1.2.840.113549.1.9.16.2.12'; // SigningCertificate
+
+// Locate + decode the ESS attribute among `attrs` (signedAttrs children).
+// Returns {present:false} when absent, else {present:true, hashName, certHash}.
+// Throws on a malformed attribute (the caller treats that as a rejection).
+function _essSigningCert(buf, attrs) {
+  for (const a of attrs) {
+    const ac = _children(buf, a.start);
+    const oid = _decodeOID(_content(buf, ac[0]));
+    const isV2 = oid === _OID_ESS_SIGNING_CERT_V2;
+    if (!isV2 && oid !== _OID_ESS_SIGNING_CERT_V1) continue;
+    // ac[1] = SET OF SigningCertificate(V2); first element is the structure SEQ,
+    // whose first child is `certs` (SEQUENCE OF ESSCertID(v2)).
+    const scv = _children(buf, ac[1].start)[0];
+    const certsSeq = _children(buf, scv.start)[0];
+    const fields = _children(buf, _children(buf, certsSeq.start)[0].start);
+    if (isV2) {
+      // ESSCertIDv2 ::= SEQ { hashAlgorithm AlgId DEFAULT sha256 (OPTIONAL),
+      //                       certHash OCTET STRING, issuerSerial OPTIONAL }
+      if (fields[0].tag === 0x30) { // hashAlgorithm present
+        const algOid = _decodeOID(_content(buf, _children(buf, fields[0].start)[0]));
+        const hashName = _DIGEST_OID_TO_HASH[algOid];
+        if (!hashName) throw new Error('ess: unsupported hash algorithm');
+        return { present: true, hashName, certHash: Buffer.from(_content(buf, fields[1])) };
+      }
+      return { present: true, hashName: 'sha256', certHash: Buffer.from(_content(buf, fields[0])) };
+    }
+    // ESSCertID (v1) ::= SEQ { certHash OCTET STRING (SHA-1), issuerSerial OPTIONAL }
+    return { present: true, hashName: 'sha1', certHash: Buffer.from(_content(buf, fields[0])) };
+  }
+  return { present: false };
+}
+
 /**
  * Verify an RFC 3161 TimeStampToken offline.
  * @param {string} tstTokenB64
@@ -251,6 +289,21 @@ function verifyTimestampToken(tstTokenB64, expectedDigestHex, trustedCertsPem = 
     }
     if (!signatureValid) {
       return { ...fail('CMS signature verification failed'), gen_time: genTime, message_imprint_matches: true };
+    }
+
+    // v0.11.1: ESS signing-certificate attribute MUST be present and bind the
+    // signer cert (RFC 3161 sec 2.4.1 / RFC 5035 / RFC 5816). Require + verify.
+    let ess;
+    try { ess = _essSigningCert(buf, attrs); }
+    catch (_) {
+      return { ...fail('malformed ESS signing-certificate attribute'), gen_time: genTime, message_imprint_matches: true, signature_valid: true };
+    }
+    if (!ess.present) {
+      return { ...fail('token lacks the ESS signing-certificate attribute (RFC 3161 sec 2.4.1)'), gen_time: genTime, message_imprint_matches: true, signature_valid: true };
+    }
+    const essGot = crypto.createHash(ess.hashName).update(signerCertDer).digest();
+    if (essGot.length !== ess.certHash.length || !crypto.timingSafeEqual(essGot, ess.certHash)) {
+      return { ...fail('ESS signing-certificate hash does not match the signer cert'), gen_time: genTime, message_imprint_matches: true, signature_valid: true };
     }
 
     // v0.11.0 MEDIUM-2: intrinsic signer-cert checks (independent of any anchor)

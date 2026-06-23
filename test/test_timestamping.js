@@ -162,3 +162,100 @@ describe('signer-cert hardening + SSRF', () => {
     await assert.rejects(() => requestTimestamp('https://169.254.169.254/tsr', Buffer.alloc(32)), /disallowed/);
   });
 });
+
+
+// --- v0.11.1: ESS signing-certificate attribute (RFC 3161 sec 2.4.1) ---
+describe('ESS signing-certificate', () => {
+  it('rejects a token missing the ESS attribute', () => {
+    if (!FIX.no_ess_token_b64) return;
+    const r = verifyTimestampToken(FIX.no_ess_token_b64, FIX.stamped_entry_hash, [FIX.tsa_ca_cert_pem]);
+    assert.ok(!r.valid && /ESS signing-certificate/.test(r.reason));
+  });
+  it('rejects a token whose ESS binds the wrong cert', () => {
+    if (!FIX.wrong_ess_token_b64) return;
+    const r = verifyTimestampToken(FIX.wrong_ess_token_b64, FIX.stamped_entry_hash, [FIX.tsa_ca_cert_pem]);
+    assert.ok(!r.valid && /does not match the signer cert/.test(r.reason));
+  });
+  it('accepts a real freetsa token (which carries ESS)', () => {
+    if (!FIX.freetsa_token_b64) return;
+    const r = verifyTimestampToken(FIX.freetsa_token_b64, FIX.freetsa_digest_hex, [FIX.freetsa_ca_pem]);
+    assert.ok(r.valid && r.chain_valid === true, r.reason);
+  });
+});
+
+
+// --- v0.11.1: OpenSSL-differential. Our verdict MUST match `openssl ts -verify`
+// across the committed corpus (independent-implementation corroboration).
+// Skipped when openssl is absent; REQUIRED in CI. ---
+const cp = require('node:child_process');
+function _opensslPath() {
+  try { cp.execFileSync('openssl', ['version'], { stdio: 'ignore' }); return 'openssl'; }
+  catch (_) { return null; }
+}
+const OPENSSL = _opensslPath();
+
+describe('OpenSSL-differential', { skip: OPENSSL ? false : 'openssl not on PATH' }, () => {
+  function opensslAccepts(der, digestHex, caPem) {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'ts-diff-'));
+    const tok = path.join(d, 't.der'); const ca = path.join(d, 'ca.pem');
+    fs.writeFileSync(tok, der); fs.writeFileSync(ca, caPem);
+    const r = cp.spawnSync(OPENSSL, ['ts', '-verify', '-token_in', '-in', tok,
+      '-digest', digestHex, '-CAfile', ca], { encoding: 'utf-8' });
+    return r.status === 0;
+  }
+  function corpus() {
+    const md = FIX.stamped_entry_hash, mca = FIX.tsa_ca_cert_pem;
+    const c = [
+      ['valid', FIX.tst_token_b64, md, mca, true],
+      ['no_ess', FIX.no_ess_token_b64, md, mca, false],
+      ['wrong_ess', FIX.wrong_ess_token_b64, md, mca, false],
+      ['expired', FIX.expired_token_b64, md, mca, false],
+      ['no_eku', FIX.no_eku_token_b64, md, mca, false],
+    ];
+    if (FIX.freetsa_token_b64) c.push(['freetsa', FIX.freetsa_token_b64, FIX.freetsa_digest_hex, FIX.freetsa_ca_pem, true]);
+    return c;
+  }
+  it('verdicts match openssl across the corpus', () => {
+    for (const [name, b64, digHex, ca, expect] of corpus()) {
+      const der = Buffer.from(b64, 'base64');
+      const ours = verifyTimestampToken(b64, digHex, [ca]).valid;
+      const osl = opensslAccepts(der, digHex, ca);
+      assert.equal(ours, expect, `${name}: ours=${ours} expected=${expect}`);
+      assert.equal(osl, expect, `${name}: openssl=${osl} expected=${expect}`);
+    }
+  });
+});
+
+
+// --- v0.11.1: fuzz the hand-rolled DER parser. Random/truncated -> invalid and
+// no throw; bit-flips -> no throw (may stay valid on don't-care bytes). Seeded
+// LCG -> deterministic. ---
+describe('DER parser fuzz', () => {
+  function lcg(seed) { let s = seed >>> 0; return () => (s = (s * 1664525 + 1013904223) >>> 0) / 0x100000000; }
+  it('random + truncated never throw and are invalid', () => {
+    const rnd = lcg(0xC10A);
+    const base = Buffer.from(FIX.tst_token_b64, 'base64');
+    for (let i = 0; i < 3000; i++) {
+      let blob;
+      if (i % 2 === 0) {
+        const n = Math.floor(rnd() * 80);
+        blob = Buffer.from(Array.from({ length: n }, () => Math.floor(rnd() * 256)));
+      } else {
+        blob = base.subarray(0, Math.floor(rnd() * base.length));
+      }
+      const r = verifyTimestampToken(blob.toString('base64'), FIX.stamped_entry_hash);
+      assert.equal(r.valid, false);  // never throws (would fail the test), never wrongly valid
+    }
+  });
+  it('bit-flipped real tokens never throw', () => {
+    const rnd = lcg(0x5EED);
+    const base = Buffer.from(FIX.tst_token_b64, 'base64');
+    for (let i = 0; i < 3000; i++) {
+      const b = Buffer.from(base);
+      const flips = 1 + Math.floor(rnd() * 11);
+      for (let k = 0; k < flips; k++) b[Math.floor(rnd() * b.length)] = Math.floor(rnd() * 256);
+      const r = verifyTimestampToken(b.toString('base64'), FIX.stamped_entry_hash);
+      assert.equal(typeof r.valid, 'boolean');  // a result object, no exception escaped
+    }
+  });
+});

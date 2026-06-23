@@ -5,6 +5,20 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-06-23
+
+Mirror of cloakllm-py 0.11.1. **Headline: trusted-timestamping crypto hardening — OpenSSL-differential verification + DER fuzzing.**
+
+### Added
+- **OpenSSL-differential test suite** — the zero-dep verifier MUST reach the same verdict as `openssl ts -verify` across a committed token corpus (valid + four single-defect negatives + a real freetsa.org token). Independent-implementation corroboration. Runs in CI (openssl ships on the runners).
+- **DER-parser fuzz harness** — random/truncated inputs never throw and are rejected; bit-flipped real tokens never throw. Crash/DoS resistance for the hand-rolled DER parser.
+
+### Fixed (hardening)
+- **ESS `SigningCertificateV2` attribute now required and verified** (RFC 3161 §2.4.1 / RFC 5035). The differential surfaced that the v0.11.0 verifier accepted a token lacking the ESS signing-certificate binding OpenSSL requires (a cert-substitution surface). Missing or mismatched ESS is now rejected. Real TSAs always include it, so real checkpoints are unaffected.
+
+### Tests
+- JavaScript 729 → **735** (+6). Re-aligned to 0.11.1 (py = js = mcp). Also backfilled `index.d.ts` config fields for v0.7.1 / v0.8.1 / v0.9.0.
+
 ## [0.11.0] - 2026-06-22
 
 Mirror of cloakllm-py 0.11.0. **Headline: RFC 3161 trusted timestamping (checkpoint-level)** -- an external clock proving "every entry up to seq N existed no later than T", closing the backdating gap KeyManifest can't.
