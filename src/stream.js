@@ -17,6 +17,22 @@ const { _warnCaseMismatchOnce } = require('./tokenizer');
 
 const UNESCAPE_RE = new RegExp(`${ESCAPED_OPEN}([A-Z][A-Z0-9_]*_(?:\\d+|REDACTED))${ESCAPED_CLOSE}`, 'g');
 
+// v0.11.5: the stream must buffer BOTH the ASCII token brackets ([ ]) and the
+// FULLWIDTH escaped brackets (U+FF3B / U+FF3D) across chunk boundaries. Batch
+// desanitize unescapes every fullwidth [...] back to ASCII; if the stream emits
+// a fullwidth bracket before its partner arrives, _unescape (run per-feed)
+// never sees the whole sequence and it leaks through fullwidth. Hold both forms.
+const _OPEN = ['[', ESCAPED_OPEN];
+const _CLOSE = [']', ESCAPED_CLOSE];
+function _findFirst(s, chars) {
+  let best = -1;
+  for (const c of chars) {
+    const p = s.indexOf(c);
+    if (p !== -1 && (best === -1 || p < best)) best = p;
+  }
+  return best;
+}
+
 class StreamDesanitizer {
     /**
      * Create a new StreamDesanitizer.
@@ -93,7 +109,7 @@ class StreamDesanitizer {
         this._buffer += chunk;
 
         while (this._buffer.length > 0) {
-            const bracketPos = this._buffer.indexOf('[');
+            const bracketPos = _findFirst(this._buffer, _OPEN);
 
             if (bracketPos === -1) {
                 parts.push(this._buffer);
@@ -106,7 +122,7 @@ class StreamDesanitizer {
                 this._buffer = this._buffer.slice(bracketPos);
             }
 
-            const closePos = this._buffer.indexOf(']');
+            const closePos = _findFirst(this._buffer, _CLOSE);
 
             if (closePos === -1) {
                 if (this._buffer.length > MAX_TOKEN_LEN) {
