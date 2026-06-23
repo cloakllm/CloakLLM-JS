@@ -381,7 +381,7 @@ class LlmDetector {
     this._customCategories = new Map();
     for (const { name, description = '' } of (config.customLlmCategories ?? [])) {
       if (this._excludedCategories.has(name)) {
-        console.warn(`CloakLLM: Custom LLM category '${name}' conflicts with excluded category — skipped`);
+        console.warn(`CloakLLM: Custom LLM category '${name}' conflicts with excluded category - skipped`);
         continue;
       }
       this._customCategories.set(name, description);
@@ -435,10 +435,10 @@ class LlmDetector {
       const statusCode = parseInt(stdout.trim(), 10);
       this._available = statusCode >= 200 && statusCode < 300;
       if (!this._available) {
-        console.warn(`CloakLLM: Ollama returned HTTP ${statusCode} at ${this._baseUrl} — LLM detection disabled`);
+        console.warn(`CloakLLM: Ollama returned HTTP ${statusCode} at ${this._baseUrl} - LLM detection disabled`);
       }
     } catch {
-      console.warn(`CloakLLM: Ollama not available at ${this._baseUrl} — LLM detection disabled`);
+      console.warn(`CloakLLM: Ollama not available at ${this._baseUrl} - LLM detection disabled`);
       this._available = false;
     }
     return this._available;

@@ -56,12 +56,12 @@ class RegexBackend extends DetectorBackend {
       try {
         const regex = new RegExp(patternStr, 'g');
         if (!this._testRegexSafety(regex)) {
-          console.warn(`CloakLLM: Custom pattern '${name}' failed safety check (potential ReDoS) — skipped`);
+          console.warn(`CloakLLM: Custom pattern '${name}' failed safety check (potential ReDoS) - skipped`);
           continue;
         }
         compiled.push({ name, pattern: regex });
       } catch (err) {
-        console.warn(`CloakLLM: Invalid custom pattern '${name}': ${err.message} — skipped`);
+        console.warn(`CloakLLM: Invalid custom pattern '${name}': ${err.message} - skipped`);
       }
     }
 
@@ -82,7 +82,7 @@ class RegexBackend extends DetectorBackend {
       if (!this._testRegexSafety(pattern)) {
         console.warn(
           `CloakLLM: built-in pattern '${name}' failed ReDoS safety check ` +
-          `(potential catastrophic backtracking) — skipped. This indicates ` +
+          `(potential catastrophic backtracking) - skipped. This indicates ` +
           `a regression. Please file a bug.`
         );
         continue;

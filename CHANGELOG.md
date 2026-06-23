@@ -5,6 +5,21 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.4] - 2026-06-23
+
+Mirror of cloakllm-py 0.11.4. **Headline: SECURITY — sanitize PII in tool-call arguments (outbound leak fix).**
+
+### Fixed (no-PII-to-provider leak — HIGH)
+- **OpenAI middleware**: tool-call arguments (`tool_calls[].function.arguments` / legacy `function_call.arguments`) are now sanitized outbound and restored inbound (all choices). Previously only message `content` was sanitized, so PII in tool calls reached the provider raw in tool-use history.
+- **Vercel middleware**: tool-call `args` and tool-result `result` (JSON-serializable objects) are sanitized via a JSON round-trip outbound and restored inbound. Previously tool-call/tool-result parts were passed through unsanitized.
+- **`enable()` / `disable()` banners are ASCII-only** — the `🛡️` emoji `console.log` crashed nothing in Node, but parity with Python + safety on exotic terminals.
+
+### Tests
+- New tool-call middleware regression tests (outbound stripped, inbound restored per choice, ASCII banner). 757 → **759**.
+
+### Note
+Re-aligned to 0.11.4 (py = js = mcp).
+
 ## [0.11.3] - 2026-06-23
 
 Mirror of cloakllm-py 0.11.3. **Headline: NER `nerRequired` knob for cross-SDK parity.** The JS NER backend already degraded to regex-only when compromise was unavailable (fail-open); this adds the opt-in fail-closed switch so deployments that depend on NER can hard-fail instead.

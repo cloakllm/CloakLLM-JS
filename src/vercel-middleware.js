@@ -56,6 +56,20 @@ function _sanitizeV3Prompt(shield, prompt, modelId) {
 
     // User/assistant messages: content is Array<Part>
     if (Array.isArray(msg.content)) {
+      // v0.11.4: tool-call `args` and tool-result `result` are JSON-serializable
+      // objects that bypass text parts; sanitize their string values via a JSON
+      // round-trip so PII in tool calls/results doesn't reach the provider raw.
+      const sanJSON = (value) => {
+        try {
+          const [out, map] = shield.sanitize(JSON.stringify(value), {
+            tokenMap, model: modelId, metadata: { role: 'tool_call' },
+          });
+          tokenMap = map;
+          return JSON.parse(out);
+        } catch (_) {
+          return value;
+        }
+      };
       const sanitizedParts = msg.content.map(part => {
         if (part?.type === 'text' && part.text) {
           const [sanitizedText, map] = shield.sanitize(part.text, {
@@ -66,7 +80,13 @@ function _sanitizeV3Prompt(shield, prompt, modelId) {
           tokenMap = map;
           return { ...part, text: sanitizedText };
         }
-        return part; // Preserve images, files, tool-calls, etc.
+        if (part?.type === 'tool-call' && part.args !== undefined) {
+          return { ...part, args: sanJSON(part.args) };
+        }
+        if (part?.type === 'tool-result' && part.result !== undefined) {
+          return { ...part, result: sanJSON(part.result) };
+        }
+        return part; // Preserve images, files, etc.
       });
       return { ...msg, content: sanitizedParts };
     }
@@ -144,12 +164,20 @@ function createCloakLLMMiddleware(config) {
 
       // V3: result.content is Array<Part>
       if (Array.isArray(result.content)) {
+        // v0.11.4: inbound mirror — restore tool-call args the model echoed back.
+        const desanJSON = (value) => {
+          try { return JSON.parse(shield.desanitize(JSON.stringify(value), tokenMap, { model: modelId })); }
+          catch (_) { return value; }
+        };
         const desanitizedContent = result.content.map(part => {
           if (part?.type === 'text' && part.text) {
             return {
               ...part,
               text: shield.desanitize(part.text, tokenMap, { model: modelId }),
             };
+          }
+          if (part?.type === 'tool-call' && part.args !== undefined) {
+            return { ...part, args: desanJSON(part.args) };
           }
           return part;
         });

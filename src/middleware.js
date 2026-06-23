@@ -232,7 +232,14 @@ function _sanitizeMessages(messages, model) {
   /** @type {TokenMap|null} */
   let tokenMap = null;
 
+  const _san = (text) => {
+    const [out, map] = _shield.sanitize(text, { tokenMap, model, metadata: { role: 'tool_call' } });
+    tokenMap = map;
+    return out;
+  };
+
   const sanitized = messages.map(msg => {
+    const newMsg = { ...msg };
     const content = msg.content;
 
     if (typeof content === 'string' && content.trim()) {
@@ -242,11 +249,9 @@ function _sanitizeMessages(messages, model) {
         metadata: { role: msg.role || 'unknown' },
       });
       tokenMap = map;
-      return { ...msg, content: sanitizedContent };
-    }
-
-    if (Array.isArray(content)) {
-      const sanitizedParts = content.map(part => {
+      newMsg.content = sanitizedContent;
+    } else if (Array.isArray(content)) {
+      newMsg.content = content.map(part => {
         if (part?.type === 'text' && part.text) {
           const [sanitizedText, map] = _shield.sanitize(part.text, { tokenMap, model });
           tokenMap = map;
@@ -254,10 +259,25 @@ function _sanitizeMessages(messages, model) {
         }
         return part;
       });
-      return { ...msg, content: sanitizedParts };
     }
 
-    return msg;
+    // v0.11.4: tool-call arguments (a JSON string) bypass `content` and would
+    // otherwise reach the provider RAW in multi-turn tool-use history.
+    if (Array.isArray(msg.tool_calls)) {
+      newMsg.tool_calls = msg.tool_calls.map(tc => {
+        const fn = tc?.function;
+        if (fn && typeof fn.arguments === 'string' && fn.arguments.trim()) {
+          return { ...tc, function: { ...fn, arguments: _san(fn.arguments) } };
+        }
+        return tc;
+      });
+    }
+    const fc = msg.function_call;  // legacy
+    if (fc && typeof fc.arguments === 'string' && fc.arguments.trim()) {
+      newMsg.function_call = { ...fc, arguments: _san(fc.arguments) };
+    }
+
+    return newMsg;
   });
 
   _cleanupExpiredMaps();
@@ -330,7 +350,7 @@ function enable(client, config = null) {
 
   if (_shield) {
     if (config) {
-      console.warn('CloakLLM: enable() called again — existing config unchanged. Call disable() first to reconfigure.');
+      console.warn('CloakLLM: enable() called again - existing config unchanged. Call disable() first to reconfigure.');
     }
   } else {
     _shield = new Shield(config || new ShieldConfig());
@@ -381,8 +401,21 @@ function enable(client, config = null) {
         callKey = ''; // consumed — cleanup handled above
         if (tokenMap && tokenMap.entityCount > 0) {
           for (const choice of response.choices) {
-            if (choice?.message?.content) {
-              choice.message.content = _shield.desanitize(choice.message.content, tokenMap, { model });
+            const message = choice?.message;
+            if (!message) continue;
+            if (message.content) {
+              message.content = _shield.desanitize(message.content, tokenMap, { model });
+            }
+            // v0.11.4: restore tool-call arguments too (inbound mirror of the fix)
+            for (const tc of (message.tool_calls || [])) {
+              const fn = tc?.function;
+              if (fn && typeof fn.arguments === 'string' && fn.arguments) {
+                fn.arguments = _shield.desanitize(fn.arguments, tokenMap, { model });
+              }
+            }
+            const fc = message.function_call;
+            if (fc && typeof fc.arguments === 'string' && fc.arguments) {
+              fc.arguments = _shield.desanitize(fc.arguments, tokenMap, { model });
             }
           }
         }
@@ -404,7 +437,7 @@ function enable(client, config = null) {
     metadata: { runtime: 'node', version: PKG_VERSION },
   });
 
-  console.log(`🛡️  CloakLLM enabled — detecting PII across all OpenAI calls`);
+  console.log('CloakLLM enabled - detecting PII across all OpenAI calls');
   console.log(`   Audit logs: ${path.resolve(_shield.config.logDir)}`);
 }
 
@@ -435,7 +468,7 @@ function disable(client = null) {
     _shield = null;
     _enabled = false;
     _activeMaps.clear();
-    console.log('🛡️  CloakLLM disabled');
+    console.log('CloakLLM disabled');
   }
 }
 
