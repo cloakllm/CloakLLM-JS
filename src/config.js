@@ -196,6 +196,19 @@ class ShieldConfig {
     this.revocationListPath = options.revocationListPath
       ?? process.env.CLOAKLLM_REVOCATION_LIST ?? null;
 
+    // --- v0.11.0 TS-3: Trusted timestamping (RFC 3161), opt-in ---
+    // When set, shield.checkpoint() / the auto-cadence stamp the chain's
+    // latest entry_hash at this TSA. null -> no timestamping. https-only.
+    this.timestampAuthorityUrl = options.timestampAuthorityUrl
+      ?? process.env.CLOAKLLM_TSA_URL ?? null;
+    // Auto-checkpoint after this many entries. 0 (default) -> auto disabled
+    // (no surprise network calls; call checkpoint() explicitly or set > 0).
+    this.timestampIntervalEntries = options.timestampIntervalEntries
+      ?? parseInt(process.env.CLOAKLLM_TSA_INTERVAL ?? '0', 10) ?? 0;
+    // PEM file of trusted TSA cert(s) for offline verification (deployer-supplied).
+    this.timestampTrustedCertsPath = options.timestampTrustedCertsPath
+      ?? process.env.CLOAKLLM_TSA_TRUSTED_CERTS ?? null;
+
     // Note: KMS-based key providers are Python-only for v0.6. JS uses local Ed25519 keys.
 
     // --- Input length cap (v0.6.1 H1.4) ---

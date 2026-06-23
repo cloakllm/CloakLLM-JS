@@ -47,6 +47,12 @@ export interface ShieldConfigOptions {
   maxInputLength?: number;
   contextAnalysis?: boolean;
   contextRiskThreshold?: number;
+  /** v0.11.0 TS-3: RFC 3161 Time-Stamp Authority URL (https only). Env: CLOAKLLM_TSA_URL. */
+  timestampAuthorityUrl?: string | null;
+  /** v0.11.0 TS-3: auto-checkpoint every N audit entries (0 = off). Env: CLOAKLLM_TSA_INTERVAL. */
+  timestampIntervalEntries?: number;
+  /** v0.11.0 TS-4: PEM file of trusted TSA cert(s) used to verify the signer chain. Env: CLOAKLLM_TSA_TRUSTED_CERTS. */
+  timestampTrustedCertsPath?: string | null;
 }
 
 export class ShieldConfig {
@@ -86,6 +92,12 @@ export class ShieldConfig {
   maxInputLength: number;
   contextAnalysis: boolean;
   contextRiskThreshold: number;
+  /** v0.11.0 TS-3: RFC 3161 Time-Stamp Authority URL (https only). */
+  timestampAuthorityUrl: string | null;
+  /** v0.11.0 TS-3: auto-checkpoint every N audit entries (0 = off). */
+  timestampIntervalEntries: number;
+  /** v0.11.0 TS-4: PEM file of trusted TSA cert(s) for signer-chain verification. */
+  timestampTrustedCertsPath: string | null;
 }
 
 export interface RiskAssessment {
@@ -228,6 +240,13 @@ export class Shield {
     provider?: string | null;
     decisionId?: string | null;
   }): void;
+  /**
+   * v0.11.0 TS-3: stamp the audit chain's latest entry_hash at an RFC 3161 TSA
+   * and append a chain_checkpoint event. Async (network). Returns the stored
+   * checkpoint_context, or null if no TSA is configured or the chain is empty.
+   * Throws on a TSA request failure.
+   */
+  checkpoint(tsaUrl?: string | null): Promise<Record<string, any> | null>;
   static generateAttestationKey(): DeploymentKeyPair;
 }
 

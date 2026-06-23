@@ -5,6 +5,20 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-06-22
+
+Mirror of cloakllm-py 0.11.0. **Headline: RFC 3161 trusted timestamping (checkpoint-level)** -- an external clock proving "every entry up to seq N existed no later than T", closing the backdating gap KeyManifest can't.
+
+### Added
+- **`chain_checkpoint` event** + `checkpoint_context` validation (TS-1): closed whitelists, https-only TSA URL, hex/base64 caps, coupling check. No PII / no content -- a hash, a URL, an opaque token only.
+- **RFC 3161 client** (TS-2): `requestTimestamp()` -- **zero runtime dependencies**. A minimal hand-rolled DER builder/parser handles the fixed RFC 3161 structure; Node's built-in `crypto.X509Certificate` + `crypto.verify` do the signature math.
+- **`shield.checkpoint()`** (TS-3, async) + opt-in auto-cadence (`timestampIntervalEntries`, default 0). Best-effort -- a TSA outage never breaks the writer.
+- **Offline verifier** (TS-4): `verifyTimestampToken()` -- messageImprint + CMS signature (reads the digest algorithm from the token; SHA-256 **and** SHA-512) + optional cert-chain; extracts genTime. Validated against real freetsa.org tokens and byte-compatible with the Python verifier.
+- **Report rollup** (TS-5): `timestamped_checkpoints` / `checkpoints_verified` / `earliest_provable_time` / `checkpoint_tsa_distribution`; failed-token verification -> NON_COMPLIANT (verify-don't-assert).
+
+### Compatibility
+- **Drop-in safe from 0.10.x.** Opt-in; no TSA configured -> no new behavior, no network. Zero new runtime deps (the doctrine holds). All v0.6.1+ chains verify.
+
 ## [0.10.3] - 2026-06-18
 
 Mirror of cloakllm-py 0.10.3 — **compliance-report integrity release** (six bugs found by a deep audit + security review, all fixed + regression-guarded). No public API change.

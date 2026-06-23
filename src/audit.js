@@ -43,6 +43,8 @@ const _ENTRY_ALLOWED_KEYS = new Set([
   'key_manifest',
   // v0.10.0 A50-1 -- Article 50 content-labeling (content_generation events only)
   'content_context',
+  // v0.11.0 TS-1 -- trusted timestamping (chain_checkpoint events only)
+  'checkpoint_context',
 ]);
 
 // v0.7.0 A4a-3: bias_context schema. See cloakllm-py audit.py for full rationale.
@@ -283,6 +285,112 @@ function _validateContentContext(ctx) {
         throw new Error(
           `AUDIT SCHEMA VIOLATION: content_context.${k} contains NUL byte.`
         );
+      }
+    }
+  }
+}
+
+// v0.11.0 TS-1: chain_checkpoint event + checkpoint_context validation.
+// Mirrors cloakllm-py audit.py. Carries a hash, a URL, and an opaque RFC 3161
+// token only -- structurally incapable of holding PII/content.
+const _CHAIN_CHECKPOINT_EVENT_TYPE = 'chain_checkpoint';
+const _CHECKPOINT_CONTEXT_ALLOWED_KEYS = new Set([
+  'stamped_entry_hash', 'tsa_url', 'tst_token_b64', 'hash_algorithm', 'stamped_seq',
+]);
+const _CHECKPOINT_HASH_ALGO_WHITELIST = new Set(['sha256', 'sha512']);
+const _CHECKPOINT_TST_TOKEN_MAX_LEN = 16384;
+const _CHECKPOINT_STR_MAX_LEN = { stamped_entry_hash: 128, tsa_url: 512, hash_algorithm: 16 };
+const _B64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+const _HEX_RE = /^[0-9a-fA-F]+$/;
+
+function _validateCheckpointContext(ctx) {
+  if (!ctx || typeof ctx !== 'object' || Array.isArray(ctx)) {
+    throw new Error(
+      `AUDIT SCHEMA VIOLATION: checkpoint_context must be a plain object ` +
+      `(got ${Array.isArray(ctx) ? 'array' : typeof ctx}).`
+    );
+  }
+  for (const required of _CHECKPOINT_CONTEXT_ALLOWED_KEYS) {
+    if (!(required in ctx)) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: checkpoint_context missing required field ` +
+        `${JSON.stringify(required)}.`
+      );
+    }
+  }
+  for (const k of Object.keys(ctx)) {
+    if (_isPrototypePollutionKey(k)) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: checkpoint_context key ${JSON.stringify(k)} ` +
+        `is a prototype-pollution vector.`
+      );
+    }
+    if (!_CHECKPOINT_CONTEXT_ALLOWED_KEYS.has(k)) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: checkpoint_context contains disallowed key ` +
+        `${JSON.stringify(k)}. Allowed: ` +
+        `${Array.from(_CHECKPOINT_CONTEXT_ALLOWED_KEYS).sort().join(', ')}.`
+      );
+    }
+    const v = ctx[k];
+    if (v === null || v === undefined) {
+      throw new Error(`AUDIT SCHEMA VIOLATION: checkpoint_context.${k} must not be null.`);
+    }
+    if (k === 'stamped_seq') {
+      if (typeof v !== 'number' || !Number.isInteger(v)) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: checkpoint_context.stamped_seq must be an int ` +
+          `(got ${typeof v}).`
+        );
+      }
+      if (v < 0) {
+        throw new Error('AUDIT SCHEMA VIOLATION: checkpoint_context.stamped_seq must be >= 0.');
+      }
+      continue;
+    }
+    if (typeof v !== 'string') {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: checkpoint_context.${k} must be a string (got ${typeof v}).`
+      );
+    }
+    if (v.includes('\x00')) {
+      throw new Error(`AUDIT SCHEMA VIOLATION: checkpoint_context.${k} contains NUL byte.`);
+    }
+    if (k === 'hash_algorithm') {
+      if (!_CHECKPOINT_HASH_ALGO_WHITELIST.has(v)) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: checkpoint_context.hash_algorithm must be one of ` +
+          `${Array.from(_CHECKPOINT_HASH_ALGO_WHITELIST).sort().join(', ')} (got ${JSON.stringify(v)}).`
+        );
+      }
+    } else if (k === 'tsa_url') {
+      if (!v.startsWith('https://')) {
+        throw new Error('AUDIT SCHEMA VIOLATION: checkpoint_context.tsa_url must be an https:// URL.');
+      }
+      if (v.length > _CHECKPOINT_STR_MAX_LEN.tsa_url) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: checkpoint_context.tsa_url exceeds ${_CHECKPOINT_STR_MAX_LEN.tsa_url} chars.`
+        );
+      }
+    } else if (k === 'stamped_entry_hash') {
+      if (!v || v.length > _CHECKPOINT_STR_MAX_LEN.stamped_entry_hash) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: checkpoint_context.stamped_entry_hash must be ` +
+          `1..${_CHECKPOINT_STR_MAX_LEN.stamped_entry_hash} chars.`
+        );
+      }
+      if (!_HEX_RE.test(v)) {
+        throw new Error('AUDIT SCHEMA VIOLATION: checkpoint_context.stamped_entry_hash must be hex.');
+      }
+    } else if (k === 'tst_token_b64') {
+      if (!v || v.length > _CHECKPOINT_TST_TOKEN_MAX_LEN) {
+        throw new Error(
+          `AUDIT SCHEMA VIOLATION: checkpoint_context.tst_token_b64 must be ` +
+          `1..${_CHECKPOINT_TST_TOKEN_MAX_LEN} chars.`
+        );
+      }
+      if (!_B64_RE.test(v)) {
+        throw new Error('AUDIT SCHEMA VIOLATION: checkpoint_context.tst_token_b64 must be base64.');
       }
     }
   }
@@ -660,6 +768,20 @@ function _validateAuditEntrySchema(entryData) {
       );
     }
   }
+
+  // v0.11.0 TS-1: checkpoint_context (chain_checkpoint events for RFC 3161
+  // trusted timestamping). Same coupling pattern.
+  const checkpointContext = entryData.checkpoint_context;
+  if (checkpointContext !== null && checkpointContext !== undefined) {
+    _validateCheckpointContext(checkpointContext);
+    const ev = entryData.event_type;
+    if (ev !== _CHAIN_CHECKPOINT_EVENT_TYPE) {
+      throw new Error(
+        `AUDIT SCHEMA VIOLATION: checkpoint_context requires ` +
+        `event_type='${_CHAIN_CHECKPOINT_EVENT_TYPE}' (got ${JSON.stringify(ev)}).`
+      );
+    }
+  }
 }
 
 /**
@@ -838,6 +960,7 @@ class AuditLogger {
     systemVersionPin = null,
     keyManifest = null,
     contentContext = null,
+    checkpointContext = null,
   }) {
     if (!this.config.auditEnabled) return null;
 
@@ -877,6 +1000,8 @@ class AuditLogger {
       key_manifest: keyManifest,
       // v0.10.0 A50-1: content_context -- only present on content_generation events
       content_context: contentContext,
+      // v0.11.0 TS-1: checkpoint_context -- only present on chain_checkpoint events
+      checkpoint_context: checkpointContext,
     };
 
     // Compliance mode injection (v0.6.0) -- fields are part of the hash chain.
@@ -932,7 +1057,35 @@ class AuditLogger {
     this._prevHash = entryHash;
     this._seq += 1;
 
+    // v0.11.0 TS-3: opt-in auto-checkpoint. The TSA call is async; we
+    // fire-and-forget (best-effort) so it never blocks or corrupts the sync
+    // writer. Errors are swallowed -- timestamping is durability, not
+    // correctness.
+    this._maybeAutoCheckpoint(eventType, entryData);
+
     return entryData;
+  }
+
+  _maybeAutoCheckpoint(eventType, entry) {
+    const interval = this.config.timestampIntervalEntries || 0;
+    const url = this.config.timestampAuthorityUrl;
+    if (interval <= 0 || !url || !entry || eventType === 'chain_checkpoint') return;
+    if ((entry.seq + 1) % interval !== 0) return;
+    // Fire-and-forget; a TSA outage must never break the writer.
+    Promise.resolve().then(async () => {
+      const { requestTimestamp } = require('./timestamping');
+      const tok = await requestTimestamp(url, Buffer.from(entry.entry_hash, 'hex'), 'sha256');
+      this.log({
+        eventType: 'chain_checkpoint',
+        checkpointContext: {
+          stamped_entry_hash: entry.entry_hash,
+          tsa_url: url,
+          tst_token_b64: tok,
+          hash_algorithm: 'sha256',
+          stamped_seq: entry.seq,
+        },
+      });
+    }).catch(() => { /* best-effort */ });
   }
 
   /**

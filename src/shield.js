@@ -162,6 +162,44 @@ class Shield {
    * @param {string|null} [options.provider=null]  provider (anthropic, openai, ...)
    * @param {string|null} [options.decisionId=null]  per-inference anchor; default fresh ULID
    */
+  /**
+   * v0.11.0 TS-3: stamp the audit chain's latest entry_hash at an RFC 3161
+   * TSA and append a chain_checkpoint event. One checkpoint proves "every
+   * entry up to seq N existed no later than the TSA's genTime". The TSA only
+   * ever receives the entry_hash; no content or PII leaves. Async (network).
+   * @param {string|null} [tsaUrl]  TSA endpoint; falls back to config.timestampAuthorityUrl
+   * @returns {Promise<object|null>} the checkpoint_context, or null when no
+   *   TSA is configured / nothing to stamp. Rejects on a TSA/network failure
+   *   (explicit call surfaces errors; the auto-cadence swallows them).
+   */
+  async checkpoint(tsaUrl = null) {
+    const url = tsaUrl || this.config.timestampAuthorityUrl;
+    if (!url || !this.config.auditEnabled) return null;
+    // Recover chain state from disk if not yet initialized (checkpoint may be
+    // the first op in a fresh process reading an existing audit dir).
+    this.audit._ensureInit();
+    const GENESIS = '0'.repeat(64);
+    const entryHash = this.audit._prevHash || GENESIS;
+    if (entryHash === GENESIS) return null; // nothing written yet
+    const stampedSeq = Math.max(0, (this.audit._seq || 1) - 1);
+    const { requestTimestamp } = require('./timestamping');
+    let tstTokenB64;
+    try {
+      tstTokenB64 = await requestTimestamp(url, Buffer.from(entryHash, 'hex'), 'sha256');
+    } catch (e) {
+      throw new Error(`checkpoint: TSA request to ${url} failed (${e.message}).`);
+    }
+    const checkpointContext = {
+      stamped_entry_hash: entryHash,
+      tsa_url: url,
+      tst_token_b64: tstTokenB64,
+      hash_algorithm: 'sha256',
+      stamped_seq: stampedSeq,
+    };
+    this.audit.log({ eventType: 'chain_checkpoint', checkpointContext });
+    return checkpointContext;
+  }
+
   recordContentGeneration({
     modality,
     synthetic = true,
@@ -1035,6 +1073,19 @@ class Shield {
       }
     }
 
+    // v0.11.0 TS-5: load deployer-supplied TSA trust anchors (PEM) for
+    // checkpoint chain-to-anchor verification.
+    let trustedCertsPem = null;
+    const tcPath = this.config.timestampTrustedCertsPath;
+    if (tcPath) {
+      try {
+        const pemText = fs.readFileSync(tcPath, { encoding: 'utf-8' });
+        trustedCertsPem = (pemText.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g)) || [pemText];
+      } catch (e) {
+        throw new Error(`generateComplianceReport: timestampTrustedCertsPath at ${tcPath} could not be loaded (${e.message}).`);
+      }
+    }
+
     const report = buildReport({
       auditEntries: entries,
       periodFrom,
@@ -1046,6 +1097,7 @@ class Shield {
       revocationList,
       chainValid: _chainResult.valid,
       chainAnomalies: _chainResult.errors,
+      trustedCertsPem,
     });
 
     if (fmt === 'json') {

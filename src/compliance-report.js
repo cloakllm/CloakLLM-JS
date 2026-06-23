@@ -66,8 +66,61 @@ function _emptyAttestation() {
       revocation_checked: false,
       revoked_keys_found: null,
       certs_after_revocation: null,
+      // v0.11.0 TS-5 (additive): trusted-timestamping rollup. null when no
+      // chain_checkpoint events are present.
+      timestamped_checkpoints: null,
+      checkpoints_verified: null,
+      earliest_provable_time: null,
+      checkpoint_tsa_distribution: null,
     },
   };
+}
+
+/**
+ * v0.11.0 TS-5: aggregate chain_checkpoint events into provenance_summary.
+ * Mirror of cloakllm-py _fill_timestamp_summary. VERIFY, DON'T ASSERT: every
+ * RFC 3161 token is actually re-verified offline. Returns anomaly strings
+ * (empty when all verify). No-op (fields stay null) when no checkpoints.
+ */
+function _fillTimestampSummary({ auditEntries, periodFrom, periodTo, attestation, trustedCertsPem }) {
+  const checkpoints = [];
+  for (const entry of auditEntries) {
+    if (entry.event_type !== 'chain_checkpoint') continue;
+    if (!_inPeriod(entry.timestamp, periodFrom, periodTo)) continue;
+    const cc = entry.checkpoint_context;
+    if (cc && typeof cc === 'object' && !Array.isArray(cc)) checkpoints.push([entry.seq, cc]);
+  }
+  if (checkpoints.length === 0) return [];
+
+  const { verifyTimestampToken } = require('./timestamping');
+  let verified = 0;
+  let earliest = null;
+  const tsaDist = {};
+  const anomalies = [];
+  for (const [seq, cc] of checkpoints) {
+    const tsa = cc.tsa_url;
+    if (typeof tsa === 'string') tsaDist[tsa] = (tsaDist[tsa] || 0) + 1;
+    let res;
+    try {
+      res = verifyTimestampToken(cc.tst_token_b64 || '', cc.stamped_entry_hash || '', trustedCertsPem || null);
+    } catch (e) {
+      anomalies.push(`seq=${seq}: checkpoint token error (${e.message})`);
+      continue;
+    }
+    if (res.valid) {
+      verified += 1;
+      if (res.gen_time && (earliest === null || res.gen_time < earliest)) earliest = res.gen_time;
+    } else {
+      anomalies.push(`seq=${seq}: checkpoint token INVALID (${res.reason})`);
+    }
+  }
+  Object.assign(attestation.provenance_summary, {
+    timestamped_checkpoints: checkpoints.length,
+    checkpoints_verified: verified,
+    earliest_provable_time: earliest,
+    checkpoint_tsa_distribution: Object.fromEntries(Object.keys(tsaDist).sort().map(k => [k, tsaDist[k]])),
+  });
+  return anomalies;
 }
 
 /**
@@ -215,6 +268,7 @@ function buildReport({
   revocationList = null,
   chainValid = true,
   chainAnomalies: chainAnomaliesArg = null,
+  trustedCertsPem = null,
 }) {
   // v0.8.1 KM-9: materialise once so we can rewalk for provenance_summary
   // without forcing callers to buffer themselves.
@@ -507,6 +561,17 @@ function buildReport({
     revocationList,
   });
 
+  // v0.11.0 TS-5: fill the trusted-timestamping rollup (tokens re-verified
+  // offline -- verify-don't-assert); failures become anomalies + a verdict
+  // reason below.
+  const tsAnomalies = _fillTimestampSummary({
+    auditEntries: auditEntriesBuffered,
+    periodFrom, periodTo,
+    attestation,
+    trustedCertsPem,
+  });
+  for (const a of tsAnomalies) chainAnomalies.push(a);
+
   // --- Verdict (part 2: real attestation check) ---
   // v0.10.3 CRITICAL-2: a KeyManifest that failed provenance verification IS a
   // real, checkable NON_COMPLIANT condition (verifyKeyProvenance ran above).
@@ -515,6 +580,14 @@ function buildReport({
       && ps.manifests_found > 0 && ps.manifests_valid < ps.manifests_found) {
     verdictReasons.push(
       `attestation: ${ps.manifests_valid}/${ps.manifests_found} key manifests passed provenance verification`
+    );
+  }
+  // v0.11.0 TS-5: a checkpoint whose RFC 3161 token fails verification is a
+  // real NON_COMPLIANT condition.
+  if (Number.isInteger(ps.timestamped_checkpoints) && Number.isInteger(ps.checkpoints_verified)
+      && ps.timestamped_checkpoints > 0 && ps.checkpoints_verified < ps.timestamped_checkpoints) {
+    verdictReasons.push(
+      `timestamping: ${ps.checkpoints_verified}/${ps.timestamped_checkpoints} chain checkpoints verified`
     );
   }
 
