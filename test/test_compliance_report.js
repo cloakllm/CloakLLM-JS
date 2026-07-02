@@ -13,8 +13,10 @@ const path = require('path');
 const os = require('os');
 
 const { Shield, ShieldConfig, BiasDetectionSession } = require('../src');
-const { buildReport, renderMarkdown, SCHEMA_VERSION, ATTESTATION_SCHEMA_VERSION } =
+const { buildReport, renderMarkdown, SCHEMA_VERSION, ATTESTATION_SCHEMA_VERSION,
+        COVERAGE_SCHEMA_VERSION, _articleCoverage } =
   require('../src/compliance-report');
+const { canonicalJson } = require('../src/attestation');
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'cloakllm-cr8-test-'));
@@ -393,5 +395,47 @@ describe('v0.10.3 wipe_confirmed_pct parity', () => {
     const v = rep.per_article.EU_AI_Act_Art_4a.wipe_confirmed_pct;
     assert.equal(v, 100);
     assert.ok(Number.isInteger(v));
+  });
+});
+
+// v0.12.0: the honest per-article coverage matrix (mirror of Python).
+describe('coverage matrix', () => {
+  const report = () => buildReport({ auditEntries: [], periodFrom: null, periodTo: null,
+    chainValid: true, chainAnomalies: [], cloakllmVersion: '0.12.0' });
+
+  it('report includes the coverage block', () => {
+    const cov = report().coverage;
+    assert.equal(cov.schema_version, COVERAGE_SCHEMA_VERSION);
+    const arts = new Set(cov.articles.map((a) => a.article));
+    assert.deepEqual([...arts].sort(),
+      ['EU_AI_Act_Art_12', 'EU_AI_Act_Art_19', 'EU_AI_Act_Art_4a', 'EU_AI_Act_Art_50']);
+    for (const a of cov.articles) {
+      assert.ok(a.cloakllm_provides && a.deployer_responsibility);
+    }
+    assert.ok(cov.out_of_scope.length);
+  });
+
+  it('schema_version is bumped to 1.1', () => {
+    assert.equal(SCHEMA_VERSION, '1.1');
+    assert.equal(report().report_metadata.schema_version, '1.1');
+  });
+
+  it('coverage is ASCII-only', () => {
+    const s = canonicalJson(_articleCoverage());
+    assert.ok(/^[\x00-\x7F]*$/.test(s), 'coverage block must be ASCII (AUDIT-6)');
+  });
+
+  it('coverage canonical matches the cross-SDK fixture', () => {
+    // The SAME fixture bytes are committed in cloakllm-py/tests/fixtures/.
+    const expected = fs.readFileSync(
+      path.join(__dirname, 'fixtures', 'coverage_canonical.txt'), 'utf-8');
+    assert.equal(canonicalJson(_articleCoverage()), expected);
+  });
+
+  it('Markdown renders the coverage section', () => {
+    const md = renderMarkdown(report());
+    assert.ok(md.includes('## Coverage matrix'));
+    assert.ok(md.includes('Your responsibility'));
+    assert.ok(md.includes('Out of scope for CloakLLM'));
   });
 });

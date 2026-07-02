@@ -64,6 +64,10 @@ const {
   BiasDetectionTimeoutError,
   BiasDetectionStateError,
 } = require('./bias-detection');
+const {
+  verifyTimestampToken,
+  requestTimestamp,
+} = require('./timestamping');
 
 module.exports = {
   Shield,
@@ -113,4 +117,7 @@ module.exports = {
   RevocationList,
   deriveRevocationList,
   REVOCATION_LIST_SCHEMA_VERSION,
+  // v0.11.0 — RFC 3161 trusted timestamping (offline verify + TSA client)
+  verifyTimestampToken,
+  requestTimestamp,
 };

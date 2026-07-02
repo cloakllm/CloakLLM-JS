@@ -333,19 +333,47 @@ export interface ComplianceReportV080 {
     bias_sessions?: number;
     findings_recorded?: number;
     wipe_confirmed_pct?: number;
+    /** v0.10.0 Article 50 content-labeling rollup (Art_50 row only). */
+    generation_events?: number;
+    labeled_events?: number;
+    label_coverage_pct?: number;
+    deepfake_events?: number;
+    modality_distribution?: Record<string, number>;
   }>;
   attestation: {
     schema_version: string;
     entries_with_certificates: number;
     signatures_valid: number;
     key_ids: string[];
-    /** v0.8.1 KeyManifest forward-compat slot. All fields null in v0.8.0. */
+    /** v0.8.1 KeyManifest provenance rollup + v0.11.0 timestamping rollup. */
     provenance_summary: {
       manifests_found: number | null;
       manifests_valid: number | null;
       within_validity_window_pct: number | null;
       root_signature_status_distribution: Record<string, number> | null;
+      /** v0.11.0 trusted-timestamping checkpoint rollup. */
+      timestamped_checkpoints?: number | null;
+      checkpoints_verified?: number | null;
+      earliest_provable_time?: string | null;
+      checkpoint_tsa_distribution?: Record<string, number> | null;
     };
+  };
+  /**
+   * v0.12.0 (schema 1.1): the honest per-article coverage matrix — what
+   * CloakLLM provides per EU AI Act article and what remains the deployer's
+   * responsibility. Byte-identical across the Python and JS SDKs.
+   */
+  coverage?: {
+    schema_version: string;
+    disclaimer: string;
+    articles: Array<{
+      article: string;
+      title: string;
+      status: 'partial' | 'record_keeping_only';
+      cloakllm_provides: string;
+      deployer_responsibility: string;
+    }>;
+    out_of_scope: string[];
   };
   decisions?: Record<string, {
     entry_count: number;
@@ -710,3 +738,40 @@ export class BiasDetectionSession {
   /** Explicit close. Idempotent. Logs bias_session_end and wipes token map. */
   end(): void;
 }
+
+// v0.11.0 — RFC 3161 trusted timestamping (offline verify + TSA client)
+
+export interface TimestampVerification {
+  valid: boolean;
+  gen_time: string | null;
+  message_imprint_matches: boolean;
+  signature_valid: boolean;
+  /** null when no trusted TSA certs were supplied to check the signer chain. */
+  chain_valid: boolean | null;
+  reason: string | null;
+}
+
+/**
+ * Offline-verify an RFC 3161 TimeStampToken against an expected digest.
+ * @param tstTokenB64 Base64 DER-encoded TimeStampToken.
+ * @param expectedDigestHex Hex of the digest that was stamped (the message imprint).
+ * @param trustedCertsPem Optional PEM cert(s) to also verify the signer chain.
+ */
+export function verifyTimestampToken(
+  tstTokenB64: string,
+  expectedDigestHex: string,
+  trustedCertsPem?: string | string[] | null,
+): TimestampVerification;
+
+/**
+ * Request a trusted timestamp over `digest` from an RFC 3161 TSA. SSRF-hardened
+ * (https-only, address deny-list, pinned-IP against DNS rebinding).
+ * @param digest Raw digest bytes to be stamped (the message imprint).
+ * @returns Base64 DER-encoded TimeStampToken.
+ */
+export function requestTimestamp(
+  tsaUrl: string,
+  digest: Buffer | Uint8Array,
+  hashAlgorithm?: string,
+  timeoutMs?: number,
+): Promise<string>;

@@ -11,8 +11,89 @@
 
 'use strict';
 
-const SCHEMA_VERSION = '1.0';
+const SCHEMA_VERSION = '1.1';   // v0.12.0: additive `coverage` block (was 1.0)
 const ATTESTATION_SCHEMA_VERSION = '1.0';
+const COVERAGE_SCHEMA_VERSION = '1.0';
+
+// v0.12.0: the honest per-article coverage matrix. CloakLLM covers the
+// record-keeping / evidence / PII-minimization SLICE of the articles below --
+// NOT full conformity. Publishing the limits (the "your responsibility" column)
+// is the point. Emitted verbatim in every report as the `coverage` block. This
+// literal MUST stay byte-identical to cloakllm-py compliance_report.py
+// `_article_coverage()` (cross-SDK report parity). ASCII-only.
+function _articleCoverage() {
+  return {
+    schema_version: COVERAGE_SCHEMA_VERSION,
+    disclaimer:
+      'CloakLLM provides the record-keeping, evidence, and PII-minimization ' +
+      'slice of the articles below. It is NOT a full conformity solution for ' +
+      'the EU AI Act. Coverage of every article is gated on the deployer ' +
+      'verifying PII-detection quality on their own data. Articles not listed ' +
+      'here are out of scope for CloakLLM.',
+    articles: [
+      {
+        article: 'EU_AI_Act_Art_12',
+        title: 'Record-keeping',
+        status: 'partial',
+        cloakllm_provides:
+          'Hash-chained, tamper-evident audit logs containing zero original ' +
+          'PII, one entry per sanitization with per-entity metadata; ' +
+          'independently verifiable (hash chain + optional Ed25519 signatures ' +
+          '+ RFC 3161 timestamps) via cloakllm-verifier.',
+        deployer_responsibility:
+          'Verify PII-detection coverage on your own data (CloakLLM scrubs ' +
+          'about 94 percent of sensitive characters on hard inputs, not 100 ' +
+          'percent); log every high-risk interaction; set and enforce a ' +
+          'retention policy; secure log storage and access.',
+      },
+      {
+        article: 'EU_AI_Act_Art_19',
+        title: 'Automatically generated logs',
+        status: 'partial',
+        cloakllm_provides:
+          'The Article 12 logs are retained in a tamper-evident, independently ' +
+          'verifiable form suitable for the automatic-logging obligation.',
+        deployer_responsibility:
+          'Choose the retention duration your system requires; guarantee log ' +
+          'availability and access control for that period.',
+      },
+      {
+        article: 'EU_AI_Act_Art_4a',
+        title: 'Special-category data for bias detection',
+        status: 'partial',
+        cloakllm_provides:
+          'A pseudonymised special-category workflow (BiasDetectionSession) ' +
+          'that records bias-audit evidence without persisting original ' +
+          'special-category PII in the logs.',
+        deployer_responsibility:
+          'Perform the bias analysis itself and establish its statistical ' +
+          'validity; establish the legal basis for processing special-' +
+          'category data; decide which categories are in scope.',
+      },
+      {
+        article: 'EU_AI_Act_Art_50',
+        title: 'Transparency and content labeling',
+        status: 'record_keeping_only',
+        cloakllm_provides:
+          'Record-keeping of content-generation events: a durable, verifiable ' +
+          'log that generated content existed and how it was disclosed. The ' +
+          'asset never enters CloakLLM (the caller passes a content hash).',
+        deployer_responsibility:
+          'Actually label or watermark the generated content and disclose it ' +
+          'to users. CloakLLM records that you did; it does not perform the ' +
+          'labeling itself.',
+      },
+    ],
+    out_of_scope: [
+      'EU_AI_Act_Art_9 (risk management)',
+      'EU_AI_Act_Art_10 (data and data governance)',
+      'EU_AI_Act_Art_13 (transparency provided to deployers)',
+      'EU_AI_Act_Art_14 (human oversight)',
+      'EU_AI_Act_Art_15 (accuracy, robustness, cybersecurity)',
+      'Conformity assessment and CE marking',
+    ],
+  };
+}
 
 const _BIAS_EVENT_TYPES = new Set([
   'bias_session_start', 'bias_pseudonymise', 'bias_finding', 'bias_session_end',
@@ -111,7 +192,12 @@ function _fillTimestampSummary({ auditEntries, periodFrom, periodTo, attestation
       verified += 1;
       if (res.gen_time && (earliest === null || res.gen_time < earliest)) earliest = res.gen_time;
     } else {
-      anomalies.push(`seq=${seq}: checkpoint token INVALID (${res.reason})`);
+      // v0.12.0 parity: keep the stable reason-code prefix, drop the
+      // implementation detail (Py exception name vs JS DER message would
+      // break byte-identical reports on NON_COMPLIANT chains).
+      let reason = res.reason || 'invalid';
+      if (reason.startsWith('malformed token')) reason = 'malformed token';
+      anomalies.push(`seq=${seq}: checkpoint token INVALID (${reason})`);
     }
   }
   Object.assign(attestation.provenance_summary, {
@@ -611,6 +697,7 @@ function buildReport({
     },
     per_article: finalArticleStats,
     attestation,
+    coverage: _articleCoverage(),
     verdict,
     verdict_reasons: verdictReasons,
   };
@@ -720,14 +807,37 @@ function renderMarkdown(report) {
   if (att.key_ids && att.key_ids.length > 0) {
     lines.push(`- Signing key_ids: ${att.key_ids.map(k => `\`${k}\``).join(', ')}`);
   }
-  if (att.schema_version === '1.0') {
+  // v0.12.0: replaced the stale "Ship v0.8.1+" note (its schema_version gate
+  // never got bumped when v0.8.1 shipped). Accurate signal = whether manifest
+  // verification actually ran. Text mirrors the Python renderer exactly.
+  const _ps = att.provenance_summary || {};
+  if (_ps.manifests_found === null || _ps.manifests_found === undefined || _ps.manifests_found === 0) {
     lines.push('');
     lines.push(
-      '_KeyManifest-based external provenance verification is not yet ' +
-      'enabled. Ship v0.8.1+ to fill in the `provenance_summary` fields._'
+      '_No KeyManifest-based provenance verification was performed for ' +
+      'this period (no key manifests were found or supplied)._'
     );
   }
   lines.push('');
+
+  const cov = report.coverage;
+  if (cov) {
+    lines.push('## Coverage matrix');
+    lines.push('');
+    lines.push(`_${cov.disclaimer}_`);
+    lines.push('');
+    lines.push('| Article | What CloakLLM provides | Your responsibility |');
+    lines.push('|---|---|---|');
+    for (const a of cov.articles) {
+      const title = `${a.article} (${a.title}, ${a.status})`;
+      const provides = a.cloakllm_provides.replace(/\|/g, '\\|');
+      const resp = a.deployer_responsibility.replace(/\|/g, '\\|');
+      lines.push(`| ${title} | ${provides} | ${resp} |`);
+    }
+    lines.push('');
+    lines.push(`**Out of scope for CloakLLM:** ${cov.out_of_scope.join(', ')}`);
+    lines.push('');
+  }
 
   if (report.decisions) {
     lines.push('## Per-decision rollup');
@@ -741,5 +851,6 @@ function renderMarkdown(report) {
 
 module.exports = {
   buildReport, renderMarkdown,
-  SCHEMA_VERSION, ATTESTATION_SCHEMA_VERSION,
+  SCHEMA_VERSION, ATTESTATION_SCHEMA_VERSION, COVERAGE_SCHEMA_VERSION,
+  _articleCoverage,
 };

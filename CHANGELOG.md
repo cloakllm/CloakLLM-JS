@@ -5,6 +5,14 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-07-01
+
+**Headline: Independent Verifiability.** A separate, zero-dependency package — [`cloakllm-verifier`](https://github.com/cloakllm/cloakllm-verifier) (`npm install cloakllm-verifier`) — lets an auditor verify every CloakLLM artifact (hash chain, RFC 3161 timestamps, KeyManifest provenance + revocation) and re-validate a compliance report **without trusting CloakLLM's code**. It reuses this package's own verify functions (single source of truth, no drift) and adds no runtime deps beyond `cloakllm`.
+
+### Added
+- **Per-article coverage matrix** in every compliance report — a machine-readable `coverage` block (report schema `1.0` -> `1.1`, additive) stating, per EU AI Act article, what CloakLLM provides and what remains the deployer's responsibility, plus an `out_of_scope` list. Byte-identical with the Python SDK. Rendered as a `## Coverage matrix` table in the Markdown report.
+- **`verifyTimestampToken` and `requestTimestamp` are now exported** from the package entrypoint (previously reachable only via `src/timestamping`), with `index.d.ts` type declarations. Enables the standalone verifier to reuse them.
+
 ## [0.11.5] - 2026-06-23
 
 ### Fixed
