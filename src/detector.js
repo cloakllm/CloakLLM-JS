@@ -49,9 +49,12 @@ const PATTERNS = {
   },
   PHONE: {
     // v0.6.1 H1.3: tightened. Parens REQUIRE both, bare area code REQUIRES
-    // trailing separator. Eliminates ambiguity but still matches `+1-555-0142`
-    // (middle area-code group is fully optional).
-    pattern: /(?<!\d)(?:\+\d{1,3}[-.\s])?(?:\(\d{2,4}\)[-.\s]?|\d{2,4}[-.\s])?\d{3,4}[-.\s]?\d{3,4}(?!\d)/g,
+    // trailing separator. Eliminates ambiguity but still matches `+1-555-0142`.
+    // v0.12.1: added a 2-digit-grouped alternative (e.g. French/European
+    // "06 12 34 56 78", 8-10 digits) -- the prior pattern assumed 3-4 digit
+    // groups, so that shape leaked on the default (non-locale) config.
+    // Byte-identical to the Python PHONE pattern (cross-SDK differential = 0).
+    pattern: /(?<!\d)(?:(?:\+\d{1,3}[-.\s])?(?:\(\d{2,4}\)[-.\s]?|\d{2,4}[-.\s])?\d{3,4}[-.\s]?\d{3,4}|\d{2}(?:[-.\s]\d{2}){3,4})(?!\d)/g,
     configKey: 'detectPhones',
   },
   IP_ADDRESS: {

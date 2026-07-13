@@ -68,3 +68,18 @@ describe('v0.11.2 headline + precision', () => {
     });
   }
 });
+
+describe('v0.12.1 spaced/grouped phone leak fix', () => {
+  for (const text of [
+    'call 06 12 34 56 78 now',
+    'call 06.12.34.56.78 now',
+    'call 06-12-34-56-78 now',
+  ]) {
+    it(`does not leak: ${text}`, () => {
+      assert.equal(san(text), 'call [PHONE_0] now');
+    });
+  }
+  it('spaced date is not flagged as a phone', () => {
+    assert.equal(san('meeting 12 25 2024 agenda'), 'meeting 12 25 2024 agenda');
+  });
+});

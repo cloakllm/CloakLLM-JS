@@ -5,6 +5,11 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1] - 2026-07-07
+
+### Fixed
+- **Detection: spaced/formatted phone numbers no longer leak on the default config.** The base `PHONE` pattern assumed 3-4 digit groups, so an all-2-digit-grouped number — e.g. the French/European mobile `06 12 34 56 78` (also `.`/`-` separated), 8-10 digits — flowed verbatim into the sanitized output and audit log without a configured locale (same *class* as the v0.11.2 spaced-card/IBAN fix). Added a second alternative to the pattern, **byte-identical** to the Python SDK (cross-SDK regex differential stays at 0). No new false positives (a spaced date like `12 25 2024` is still not flagged). Regression-guarded in `test/test_detection_v0112.js`.
+
 ## [0.12.0] - 2026-07-01
 
 **Headline: Independent Verifiability.** A separate, zero-dependency package — [`cloakllm-verifier`](https://github.com/cloakllm/cloakllm-verifier) (`npm install cloakllm-verifier`) — lets an auditor verify every CloakLLM artifact (hash chain, RFC 3161 timestamps, KeyManifest provenance + revocation) and re-validate a compliance report **without trusting CloakLLM's code**. It reuses this package's own verify functions (single source of truth, no drift) and adds no runtime deps beyond `cloakllm`.
