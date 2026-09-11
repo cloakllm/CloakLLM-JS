@@ -7,10 +7,13 @@
 
 const { DetectorBackend } = require('./base');
 const { LOCALE_PATTERNS } = require('../locale-patterns');
-// PATTERNS is the single source of truth in detector.js.
-// No circular dependency: detector.js lazy-requires this module inside
-// _buildDefaultPipeline(), so detector.js is always fully loaded first.
-const { PATTERNS } = require('../detector');
+// PATTERNS comes from patterns.js, not detector.js. Importing it from
+// detector.js used to pull in that module's pipeline builder, whose
+// require('./backends/llm') reaches llm-detector.js and its child_process/net
+// dependencies -- bundlers follow requires inside function bodies, so a
+// detection-only browser/worker build dragged in the whole Ollama path.
+// This also removes the former detector.js <-> regex.js circular dependency.
+const { PATTERNS } = require('../patterns');
 
 class RegexBackend extends DetectorBackend {
   /**
