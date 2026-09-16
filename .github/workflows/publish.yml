@@ -1,11 +1,11 @@
-name: Publish to npm
+﻿name: Publish to npm
 
 on:
   push:
     tags: ["v*"]
 
 # v0.6.1 H7: scoped permissions + concurrency lock.
-# v0.6.3 I6.1: OIDC trusted publishing — no long-lived token in CI.
+# v0.6.3 I6.1: OIDC trusted publishing ג€” no long-lived token in CI.
 permissions:
   contents: read
   id-token: write  # required for npm OIDC trusted publishing
@@ -17,33 +17,33 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    # v0.6.3 I6.1: GitHub Environment provides extra protection — required
+    # v0.6.3 I6.1: GitHub Environment provides extra protection ג€” required
     # reviewers, branch/tag restrictions, and a clean audit trail of every
-    # release. Configure at: Settings → Environments → New environment "npm"
+    # release. Configure at: Settings ג†’ Environments ג†’ New environment "npm"
     environment:
       name: npm
       url: https://www.npmjs.com/package/cloakllm
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          # v0.6.3 I6.1: npm trusted publishing requires npm CLI ≥ 11.5.1.
+          # v0.6.3 I6.1: npm trusted publishing requires npm CLI ג‰¥ 11.5.1.
           # Node 22 LTS ships with npm 10. We tried `npm install -g npm@latest`
-          # to upgrade in-place — that crashes (`Cannot find module
+          # to upgrade in-place ג€” that crashes (`Cannot find module
           # 'promise-retry'`) because npm 10's running process loses module
           # resolution mid-overwrite when its own files are replaced with
           # npm 11's incompatible internals. Cleanest fix: pin to Node 24,
           # which ships with npm 11.5+. This affects ONLY the publish job
-          # toolchain — the package's own `engines.node: ">=18"` constraint
+          # toolchain ג€” the package's own `engines.node: ">=18"` constraint
           # is unchanged, and the tarball produced is identical.
           node-version: 24
           registry-url: https://registry.npmjs.org
 
       # v0.6.3 I6.1: OIDC trusted publishing replaces the long-lived NPM_TOKEN.
-      # Provenance attestations are AUTOMATIC under trusted publishing — no
+      # Provenance attestations are AUTOMATIC under trusted publishing ג€” no
       # --provenance flag needed (closes the v0.6.2 TODO).
       #
       # Prerequisite (one-time): configure trusted publisher at
@@ -59,7 +59,7 @@ jobs:
       #
       # Idempotency wrapper: npm doesn't have PyPI's `skip-existing: true`, so
       # a duplicate-version publish is a hard failure. We treat "previously
-      # published versions" as a no-op success — same semantics as PyPI's
+      # published versions" as a no-op success ג€” same semantics as PyPI's
       # skip-existing, useful for re-tagged rc builds and for safe re-runs.
       - name: Publish to npm (OIDC + auto-provenance)
         shell: bash
@@ -70,7 +70,7 @@ jobs:
             exit 0
           fi
           if grep -q "previously published versions" /tmp/publish.log; then
-            echo "::notice::Version already on npm — OIDC auth + provenance verified, treating as no-op (skip-existing semantics)"
+            echo "::notice::Version already on npm ג€” OIDC auth + provenance verified, treating as no-op (skip-existing semantics)"
             exit 0
           fi
           echo "::error::npm publish failed with an error other than duplicate version"
