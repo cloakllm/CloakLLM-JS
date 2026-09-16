@@ -74,11 +74,31 @@ describe('A50-1 content_context validation', () => {
     });
   }
 
-  for (const disc of ['c2pa', 'watermark', 'metadata', 'visible_notice', 'none']) {
+  for (const disc of ['c2pa', 'watermark', 'metadata', 'visible_notice',
+    'audible_notice', 'none', 'other']) {
     it(`accepts disclosure_method=${disc}`, () => {
       assert.doesNotThrow(() => write(validCc({ disclosure_method: disc })));
     });
   }
+
+  it('accepts audible_notice for an audio deepfake', () => {
+    // The Commission contemplates "visible OR AUDIBLE" labels. Before this
+    // value existed, a deployer disclosing an audio deepfake audibly had to
+    // either misrepresent it as visible_notice or fail validation -- and it
+    // bites exactly where Art 50(4) focuses.
+    assert.doesNotThrow(() => write(validCc({
+      modality: 'audio', disclosure_method: 'audible_notice',
+    })));
+  });
+
+  it('still rejects speculative disclosure methods', () => {
+    // `other` is the escape hatch for techniques practice has not named yet;
+    // it is deliberately NOT a licence to pre-add guesses, so these must fail.
+    for (const guess of ['fingerprint', 'provenance', 'steganography']) {
+      assert.throws(() => write(validCc({ disclosure_method: guess })),
+        /disclosure_method/);
+    }
+  });
 
   it('rejects a bad modality', () => {
     assert.throws(() => write(validCc({ modality: 'hologram' })), /modality/);
