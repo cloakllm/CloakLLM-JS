@@ -188,13 +188,78 @@ describe('ESS signing-certificate', () => {
 // across the committed corpus (independent-implementation corroboration).
 // Skipped when openssl is absent; REQUIRED in CI. ---
 const cp = require('node:child_process');
-function _opensslPath() {
-  try { cp.execFileSync('openssl', ['version'], { stdio: 'ignore' }); return 'openssl'; }
-  catch (_) { return null; }
-}
-const OPENSSL = _opensslPath();
 
-describe('OpenSSL-differential', { skip: OPENSSL ? false : 'openssl not on PATH' }, () => {
+// Resolve a CAPABLE openssl, not merely a present one.
+//
+// A stale openssl on PATH is WORSE than none. This corpus exercises the ESS
+// SigningCertificateV2 check added in v0.11.1 (RFC 5035), which OpenSSL 1.0.x
+// does not handle -- it returns a confident "invalid" for a token that is
+// valid, and the differential then reports a mismatch that says nothing about
+// our implementation. That is the exact opposite of what an independent oracle
+// is for. Seen in the wild: a 2016 openssl shipped with Subversion shadowing a
+// modern one earlier on PATH.
+//
+// Order: $OPENSSL_BIN, then PATH, then common install locations.
+const MIN_OPENSSL = [1, 1, 1];
+
+function _opensslInfo(bin) {
+  try {
+    const out = cp.execFileSync(bin, ['version'], { encoding: 'utf-8' });
+    const m = /OpenSSL\s+(\d+)\.(\d+)\.(\d+)/.exec(out);
+    if (!m) return null;
+    return { bin, v: [+m[1], +m[2], +m[3]], text: out.trim().split('\n')[0] };
+  } catch (_) { return null; }
+}
+
+function _atLeast(a, b) {
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i];
+  return true;
+}
+
+function _findOpenssl() {
+  const candidates = [
+    process.env.OPENSSL_BIN,
+    'openssl',
+    'C:/Program Files/Git/mingw64/bin/openssl.exe',
+    'C:/Program Files/Git/usr/bin/openssl.exe',
+    'C:/Program Files/OpenSSL-Win64/bin/openssl.exe',
+    '/usr/bin/openssl',
+    '/usr/local/bin/openssl',
+    '/opt/homebrew/bin/openssl',
+  ].filter(Boolean);
+
+  const tooOld = [];
+  for (const c of candidates) {
+    const info = _opensslInfo(c);
+    if (!info) continue;
+    if (_atLeast(info.v, MIN_OPENSSL)) return { found: info, tooOld };
+    tooOld.push(info.text);
+  }
+  return { found: null, tooOld };
+}
+
+const { found: OPENSSL_INFO, tooOld: OPENSSL_TOO_OLD } = _findOpenssl();
+const OPENSSL = OPENSSL_INFO ? OPENSSL_INFO.bin : null;
+
+const _skipReason = OPENSSL
+  ? false
+  : (OPENSSL_TOO_OLD.length
+    ? `no openssl >= ${MIN_OPENSSL.join('.')} (found only: ${OPENSSL_TOO_OLD.join('; ')}) `
+      + '-- set OPENSSL_BIN to a modern build'
+    : 'openssl not found -- set OPENSSL_BIN to run the differential');
+
+// "REQUIRED in CI" was only a comment, so a CI box without a usable openssl
+// would have skipped the differential silently and still gone green. Make the
+// requirement real: in CI, an unusable oracle is a failure, not a skip.
+if (!OPENSSL && process.env.CI) {
+  describe('OpenSSL-differential', () => {
+    it('has a usable openssl (REQUIRED in CI)', () => {
+      assert.fail(_skipReason);
+    });
+  });
+}
+
+describe('OpenSSL-differential', { skip: _skipReason }, () => {
   function opensslAccepts(der, digestHex, caPem) {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), 'ts-diff-'));
     const tok = path.join(d, 't.der'); const ca = path.join(d, 'ca.pem');
