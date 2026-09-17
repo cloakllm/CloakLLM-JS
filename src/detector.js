@@ -52,7 +52,7 @@ class DetectionEngine {
     // Pass 1: Regex (always)
     this._backends.push(new RegexBackend(this.config));
 
-    // Pass 2: NER (always — uses compromise if available)
+    // Pass 2: NER (always -- uses compromise if available)
     const nerBackend = new NerBackend();
     this._backends.push(nerBackend);
 

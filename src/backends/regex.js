@@ -1,5 +1,5 @@
 /**
- * RegexBackend — regex-based PII detection.
+ * RegexBackend -- regex-based PII detection.
  *
  * Handles custom patterns, locale patterns, and built-in patterns.
  * This is always the first pass in the default detection pipeline.

@@ -924,7 +924,7 @@ class AuditLogger {
         `silent restart would let an attacker mask tampering as a restart.`
       );
     }
-    // else: log dir empty OR all files empty AND strict mode off → start
+    // else: log dir empty OR all files empty AND strict mode off -> start
     // from GENESIS (back-compat default).
 
     this._initialized = true;
