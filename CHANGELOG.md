@@ -5,6 +5,18 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.2] - 2026-09-17
+
+### Added
+- **Article 50: `audible_notice` and `other` accepted as `disclosure_method`**, byte-identically with the Python SDK. Article 50 deliberately declines to enumerate marking techniques, so a closed enum cannot drift against the *law* but will always lag *practice*: the Commission contemplates "visible or audible" labels, and a deployer disclosing an audio deepfake audibly previously had to misrepresent it as `visible_notice` or fail validation. `other` absorbs future techniques without forecasting them; speculative values such as `fingerprint` are still rejected. Purely additive -- old records validate unchanged, no schema bump.
+
+### Changed
+- **`PATTERNS` moved to `src/patterns.js`**, its single source of truth. Importing it from `detector.js` also pulled in that module's pipeline builder, whose `require('./backends/llm')` reaches `llm-detector.js` and its `child_process`/`net` dependencies -- bundlers follow requires inside function bodies, so any detection-only browser or worker build dragged in the whole Ollama path or failed outright. `detector.js` re-exports `PATTERNS`, so `require('./detector').PATTERNS` is unchanged and `index.js` never exported it: **no public API change.** Also removes the former `detector.js` <-> `backends/regex.js` circular dependency.
+- CI and publishing workflows pin every GitHub Action to a commit SHA.
+
+### Note
+- Python chains written by cloakllm-py 0.12.2+ now verify in this SDK. Previously a whole-valued float (`latency_ms` of exactly `0.0`) serialised as `0.0` in Python and `0` here, producing a hash mismatch on a genuine chain. Fixed on the Python write side; no change was needed in this SDK. Chains written before 0.12.2 remain affected.
+
 ## [0.12.1] - 2026-07-07
 
 ### Fixed
