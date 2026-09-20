@@ -5,6 +5,20 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.4] - 2026-09-20
+
+### Fixed
+- **Contiguous phone numbers were not detected at all** -- mirror of the Python fix; the regexes and the context gate are both hand-mirrored. A number written without separators, including every bare US 10-digit number, went straight through. Matching bare digit runs is a trap: roughly 64% of random 10-digit ids satisfy NANP shape, so `2026091912` is simultaneously a plausible Washington DC number and a plausible invoice id. **E.164 is ungated** (a leading `+` is a declaration, not an inference) and **NANP-shaped runs are gated on a keyword near the number**, allowing up to two filler words of at most four characters -- which admits "reach me on" and "call him at" while still refusing "call about order 9876543210".
+- **`_testRegexSafety` failed open.** A BUILT-IN that failed it was skipped, leaving detection for that category silently switched off; it now throws `PatternSafetyError`. Custom patterns are still skipped with a warning -- a user's own regex must not stop the SDK starting -- and locale patterns now warn where the branch used to be silent. Two budgets: **100ms** for a regex we did not write, **1s** for our own, so fail-closed does not turn slow hardware into an install that cannot start.
+
+### Added
+- **`hasPhoneContext()`** and **`PatternSafetyError`** exported.
+- 67 new tests mirroring the Python file one for one. Cross-SDK differential: 198 inputs, 0 divergences.
+
+### Known limits, asserted by tests
+- A bare run with no nearby keyword, and a contiguous international number without a `+`, are both still missed by design.
+- `5550104422` is correctly rejected: an exchange code cannot begin with 0, so it is not a valid number, despite having been carried for some time as the example of this gap.
+
 ## [0.12.3] - 2026-09-20
 
 ### Fixed
