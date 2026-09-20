@@ -4,9 +4,21 @@
  * Usage:
  *   node benchmarks/evaluate.js [--json]
  *
- * JS has no spaCy NER, so PERSON/ORG/GPE entities are filtered from
- * expected entities (not from samples — so regex entities in mixed
- * samples are still tested).
+ * PERSON/ORG/GPE ground truth is scored only when a NER backend is actually
+ * available (compromise installed). Otherwise it is filtered out of the
+ * EXPECTED entities -- not out of the samples, so regex entities in mixed
+ * samples are still tested.
+ *
+ * That conditional matters, and getting it wrong produced a false alarm.
+ * This harness used to strip NER ground truth UNCONDITIONALLY, on the
+ * premise -- true when it was written -- that "JS has no NER". Detections
+ * were never filtered to match. So the moment compromise was installed,
+ * every PERSON/ORG/GPE detection was scored against ground truth that had
+ * been deleted: 32 guaranteed false positives, 0 possible true positives,
+ * and an overall precision of 72% that said nothing about detection quality.
+ *
+ * A benchmark whose premise has silently expired reports a defect in the
+ * code instead of in itself.
  */
 
 'use strict';
@@ -51,16 +63,37 @@ function overlaps(aStart, aEnd, bStart, bEnd, threshold = 0.5) {
 }
 
 /**
- * Load corpus from JSON file. Filters out NER entities from expected
- * (JS has no spaCy).
+ * Is a NER backend actually usable in this process?
+ *
+ * Asked of the real module rather than assumed, because the assumption is
+ * exactly what went stale here.
  */
-function loadCorpus(corpusPath) {
+function nerAvailable() {
+  try {
+    const { NerBackend } = require('../src/backends/ner');
+    return new NerBackend().available === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Load corpus from JSON file.
+ *
+ * @param {string} [corpusPath]
+ * @param {{ includeNer?: boolean }} [opts] when includeNer is false (the
+ *   default is to decide by asking the NER backend), PERSON/ORG/GPE ground
+ *   truth is dropped so that an engine which cannot detect those categories
+ *   is not marked down for missing them.
+ */
+function loadCorpus(corpusPath, opts = {}) {
   if (!corpusPath) corpusPath = CORPUS_PATH;
+  const includeNer = opts.includeNer === undefined ? nerAvailable() : opts.includeNer;
   const data = JSON.parse(fs.readFileSync(corpusPath, 'utf8'));
   for (const sample of data.samples) {
-    sample.entities = sample.entities.filter(
-      (e) => !NER_CATEGORIES.has(e.category)
-    );
+    sample.entities = includeNer
+      ? sample.entities
+      : sample.entities.filter((e) => !NER_CATEGORIES.has(e.category));
   }
   return data.samples;
 }
@@ -77,8 +110,29 @@ function evaluate(shield, corpus) {
   const sampleResults = [];
 
   for (const sample of corpus) {
-    const { detections } = shield.detector.detect(sample.text);
+    const all = shield.detector.detect(sample.text).detections;
     const groundTruth = sample.entities;
+
+    // Score a NER-category detection only where the corpus actually makes a
+    // claim about names, orgs and places.
+    //
+    // Each sample annotates the entity it is TESTING, not everything it
+    // contains. "Old Visa: 4222222222222." is tagged `regex` and labels only
+    // the card -- but Visa is a real organisation, and so are Google, UK and
+    // Berlin in other regex samples. Counting those detections as false
+    // positives punishes the engine for being right about something nobody
+    // wrote down, which is how NER precision came out at 72%.
+    //
+    // `ner` and `multi` samples annotate NER entities properly, so they are
+    // scored. `negative` samples are scored too: they contain no PII of any
+    // kind and assert that nothing is found, so a NER hit there is a true
+    // false positive. `regex` and `adversarial` samples are silent about
+    // names, so their NER detections are neither credited nor penalised.
+    const scored = new Set(['ner', 'multi', 'negative']);
+    const nerScored = (sample.tags || []).some((t) => scored.has(t));
+    const detections = nerScored
+      ? all
+      : all.filter((d) => !NER_CATEGORIES.has(d.category));
 
     const matchedGt = new Set();
     const matchedDet = new Set();

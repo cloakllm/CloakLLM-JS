@@ -46,6 +46,31 @@ class NerDetector {
     // Places → GPE
     this._extractEntities(doc.places(), text, 'GPE', 0.75, coveredSpans, detections);
 
+    // Organizations named only by COORDINATION: "Microsoft and Amazon".
+    //
+    // compromise tags Amazon there as a proper noun but not an organisation,
+    // so the second half of the pair was missed while the first was caught.
+    // Coordination shares type -- that is what "and" is doing in the
+    // sentence -- so an unrecognised proper noun conjoined to a recognised
+    // organisation is one too.
+    //
+    // Anchored on a confirmed #Organization, which is what keeps it safe.
+    // The obvious alternatives are not: treating every #Acronym as an org
+    // would swallow DNS, API, JWT and UUID, and treating every #ProperNoun
+    // as one would swallow every capitalised word in the corpus. Measured:
+    // this adds Amazon and changes nothing else -- person coordinations
+    // ("Alice Chen and Bob Martinez") do not fire, because no organisation
+    // anchors them.
+    //
+    // Confidence is below a directly-recognised org: this is inferred from
+    // a neighbour rather than from the term itself.
+    this._extractEntities(
+      doc.match('#Organization+ (and|&|or|,) #ProperNoun+')
+        .match('(and|&|or|,) #ProperNoun+')
+        .match('#ProperNoun+'),
+      text, 'ORG', 0.65, coveredSpans, detections,
+    );
+
     return detections;
   }
 

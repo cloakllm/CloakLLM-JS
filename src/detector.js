@@ -49,23 +49,52 @@ class DetectionEngine {
     const { NerBackend } = require('./backends/ner');
     const { LlmBackend } = require('./backends/llm');
 
+    // Order is precedence: a pass that claims a span first keeps it.
+    //
+    // regex -> LLM -> NER, and the LLM pass moved ahead of NER on 2026-09-20.
+    // It used to run last, so a generic NER guess could take a span out from
+    // under a category the USER had explicitly defined:
+    //
+    //     customLlmCategories: [{ name: 'PATIENT_ID', ... }]
+    //     "Patient PAT-12345 was admitted"
+    //         -> "Patient [PERSON_0]-12345 was admitted"
+    //
+    // Not a leak -- the value is still tokenised -- but the person asked for
+    // PATIENT_ID and silently got PERSON, which corrupts entity_details and
+    // anything downstream keyed on the category.
+    //
+    // Regex stays first: it is structural and the most certain. An explicitly
+    // configured category is a stronger statement of intent than a
+    // probabilistic name guess, so it outranks NER. NER is the fuzziest pass
+    // and now goes last.
+    //
+    // Safe because the two do not compete: when NER is available the LLM is
+    // told to skip PERSON/ORG/GPE, so it cannot steal them by going first;
+    // when NER is unavailable the LLM keeps them, which is the only way they
+    // get detected at all. The Python SDK carries the same ordering and the
+    // same fix -- it had the identical latent flaw, exposed by a different
+    // input (spaCy claims "John Smith-99" whole).
+
     // Pass 1: Regex (always)
     this._backends.push(new RegexBackend(this.config));
 
-    // Pass 2: NER (always -- uses compromise if available)
     const nerBackend = new NerBackend();
-    this._backends.push(nerBackend);
 
-    // Pass 3: LLM (opt-in)
+    // Pass 2: LLM (opt-in)
     if (this.config.llmDetection) {
       const llmBackend = new LlmBackend(this.config);
-      this._backends.push(llmBackend);
 
-      // NER/LLM coordination: if NER handles PERSON/ORG/GPE, tell LLM to skip them
+      // NER/LLM coordination: if NER handles PERSON/ORG/GPE, tell LLM to skip
+      // them. Must be set BEFORE the backend runs, which is why it is here
+      // rather than after the push.
       if (nerBackend.available) {
         llmBackend.addExcludedCategories(['PERSON', 'ORG', 'GPE']);
       }
+      this._backends.push(llmBackend);
     }
+
+    // Pass 3: NER (always -- uses compromise if available)
+    this._backends.push(nerBackend);
   }
 
   // --- Backward compatibility properties ---

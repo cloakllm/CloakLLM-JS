@@ -41,6 +41,9 @@
     "LICENSE",
     "README.md"
   ],
+  "devDependencies": {
+    "compromise": "^14.0.0"
+  },
   "peerDependencies": {
     "openai": ">=4.0.0",
     "ai": ">=4.0.0"
