@@ -5,6 +5,18 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.3] - 2026-09-20
+
+### Fixed
+- **SECURITY: credit-card detection was missing entire issuer ranges, and partially leaking them.** Mirror of the Python fix; the two regexes are hand-mirrored and both had the identical hole. Luhn-valid **Mastercard 2-series** (2221-2720, issued since 2017), **JCB** (3528-3589) and **UnionPay** (62, the largest network in the world by volume) were not detected at all, along with Discover 644-649, Diners Club and 17-19 digit UnionPay. On the normal spaced forms this was not merely a miss: `PHONE` claimed part of each card and the remaining digits flowed on verbatim.
+- **No Luhn checksum**, so a card-shaped number with a broken check digit was reported as a card. Luhn now gates every match, rejecting in `detect()` rather than in the regex so the span stays uncovered and a rejected candidate is not silently relabelled as a `PHONE`. Prefix **and** checksum, never either alone -- Luhn by itself admits one in ten random digit runs. Maestro remains deliberately uncovered, with a test asserting the gap.
+- **`_testRegexSafety` measured wall clock rather than CPU time.** Failing that check *skips* the pattern, switching a detection category off with only a warning, so on a wall-clock threshold a busy machine could quietly stop detecting. Python's EMAIL pattern had only ~6x of headroom against the limit and a loaded test run really did drop it; the JS side shares the design and gets the same fix, via `process.cpuUsage()`.
+
+### Added
+- **`luhnValid()`**, exported from `src/patterns.js` alongside `PATTERNS`.
+- **A false-positive corpus, measured as a number** -- 0 of 13 on ISBNs, order ids, IMEIs, timestamps, UUIDs, git SHAs and tracking numbers. There had been no false-positive measurement at all.
+- 55 new tests in `test/test_detection_v0123.js`, mirroring the Python file one for one.
+
 ## [0.12.2] - 2026-09-17
 
 ### Added
