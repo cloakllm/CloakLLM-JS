@@ -62,5 +62,5 @@ jobs:
           if (!restored.includes('john@example.com')) {
             throw new Error('round-trip failed: ' + restored);
           }
-          console.log('install-smoke: OK ג€” cloakllm round-trip works from packed tarball');
+          console.log('install-smoke: OK -- cloakllm round-trip works from packed tarball');
           "
