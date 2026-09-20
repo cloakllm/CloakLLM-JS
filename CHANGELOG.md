@@ -5,6 +5,17 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.5] - 2026-09-20
+
+### Fixed
+- **SECURITY-ADJACENT / BREAKING IN 0.12.4: the SDK crashed outside Node.** v0.12.4 replaced `performance.now()` with `process.cpuUsage()` in the ReDoS safety check, to make the measurement immune to machine load. **`process` does not exist in a browser or a service worker**, and this is a cross-platform library -- so merely *constructing* a `RegexBackend` threw `ReferenceError: process is not defined` anywhere outside Node. Any browser bundle, web worker or MV3 extension using 0.12.4 is affected; Node consumers are not. It took down the CloakLLM Guard extension, whose service worker could no longer build a detector at all. **Now: CPU time where it exists, wall clock where it does not.** Node keeps the contention immunity v0.12.3 added; browsers fall back, but only against the 1-second built-in budget where real patterns sit about 60x clear, so the sensitivity has nowhere to bite.
+- **A UTF-8 BOM in `src/backends/regex.js`**, introduced in 0.12.4 by PowerShell's `Set-Content -Encoding utf8`, which writes UTF-8 *with* BOM.
+
+### Added
+- **Tests that delete `globalThis.process`** and assert a backend still builds, still detects and still measures. Both fail against 0.12.4. **Every test in this repo runs in Node**, which is exactly why 900 green tests said nothing about a browser: a cross-platform library whose whole suite runs on one platform is only tested on that platform, however many tests it has.
+
+### Note on versioning
+py, js and mcp normally move together. **This release is JavaScript only** -- the defect is JS-only, the Python SDK is unaffected, and shipping no-op releases of two other packages to preserve a version number is worse than the divergence. Python and MCP remain at 0.12.4 and are correct there.
 ## [0.12.4] - 2026-09-20
 
 ### Fixed
