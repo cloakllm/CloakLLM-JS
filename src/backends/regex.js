@@ -1,4 +1,4 @@
-﻿/**
+/**
  * RegexBackend -- regex-based PII detection.
  *
  * Handles custom patterns, locale patterns, and built-in patterns.
@@ -80,13 +80,29 @@ class RegexBackend extends DetectorBackend {
       '1234-'.repeat(1000),           // PHONE separators
       'sk_' + 'a'.repeat(1000),       // API_KEY long bearer
     ];
+    // v0.12.5: `process` does not exist in a browser or a service worker,
+    // and this is a cross-platform library. v0.12.4 called
+    // process.cpuUsage() unconditionally, so merely CONSTRUCTING a
+    // RegexBackend threw ReferenceError anywhere outside Node -- which
+    // took down the CloakLLM Guard extension, whose service worker could
+    // no longer build a detector at all.
+    //
+    // CPU time where it exists, wall clock where it does not. Browsers
+    // expose no CPU-time API, so the fallback reintroduces the contention
+    // sensitivity that v0.12.3 removed -- but only there, and only against
+    // the 1-second built-in budget, where real patterns sit ~60x clear.
+    const hasCpuClock = typeof process !== 'undefined'
+      && typeof process.cpuUsage === 'function';
+
     let worst = 0;
     for (const input of inputs) {
       // process.cpuUsage() is microseconds of user+system CPU.
-      const start = process.cpuUsage();
+      const start = hasCpuClock ? process.cpuUsage() : performance.now();
       new RegExp(regex.source, regex.flags).exec(input);
-      const used = process.cpuUsage(start);
-      worst = Math.max(worst, (used.user + used.system) / 1000);
+      const elapsed = hasCpuClock
+        ? (() => { const u = process.cpuUsage(start); return (u.user + u.system) / 1000; })()
+        : performance.now() - start;
+      worst = Math.max(worst, elapsed);
     }
     return worst;
   }

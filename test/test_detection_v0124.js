@@ -192,3 +192,47 @@ describe('v0.12.4 ReDoS safety', () => {
     assert.ok(worst < 10, `${worst.toFixed(1)} ms of CPU`);
   });
 });
+
+describe('v0.12.5 the SDK must run outside Node', () => {
+  it('RegexBackend builds with no `process` global', async () => {
+    // v0.12.4 called process.cpuUsage() unconditionally in the ReDoS
+    // safety check, so merely CONSTRUCTING a backend threw
+    // ReferenceError anywhere outside Node. This is a cross-platform
+    // library; it took down the Guard extension's service worker, which
+    // could no longer build a detector at all, and the failure reached
+    // npm because every test here runs in Node.
+    const real = globalThis.process;
+    try {
+      delete globalThis.process;
+      const backend = new RegexBackend({
+        customPatterns: [], locale: null,
+        detectEmails: true, detectSsns: true, detectCreditCards: true,
+        detectIban: true, detectApiKeys: true, detectPhones: true,
+        detectIpAddresses: false,
+      });
+      assert.ok(backend._compiledPatterns.length > 0);
+      const found = backend.detect('card 4111 1111 1111 1111', []);
+      assert.ok(found.some((d) => d.category === 'CREDIT_CARD'),
+        'and it must still detect');
+    } finally {
+      globalThis.process = real;
+    }
+  });
+
+  it('the safety check still measures without a CPU clock', () => {
+    const real = globalThis.process;
+    try {
+      delete globalThis.process;
+      const backend = new RegexBackend({
+        customPatterns: [], locale: null, detectEmails: true,
+        detectSsns: false, detectCreditCards: false, detectIban: false,
+        detectApiKeys: false, detectPhones: false, detectIpAddresses: false,
+      });
+      const ms = backend._measureRegexSafety(PATTERNS.EMAIL.pattern);
+      assert.equal(typeof ms, 'number');
+      assert.ok(Number.isFinite(ms) && ms >= 0, `got ${ms}`);
+    } finally {
+      globalThis.process = real;
+    }
+  });
+});
