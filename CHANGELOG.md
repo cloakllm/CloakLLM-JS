@@ -14,7 +14,7 @@ versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 - **`luhnValid()`**, exported from `src/patterns.js` alongside `PATTERNS`.
-- **A false-positive corpus, measured as a number** -- 0 of 13 on ISBNs, order ids, IMEIs, timestamps, UUIDs, git SHAs and tracking numbers. There had been no false-positive measurement at all.
+- **A false-positive corpus, measured as a number** -- **0 of 13 credit-card false positives** on ISBNs, order ids, IMEIs, timestamps, UUIDs, git SHAs and tracking numbers, against 2 before this release. There had been no false-positive measurement at all. Scope matters: that is *credit-card* false positives measured *regex-only*. Across every category the same corpus scores 1 of 13 regex-only and 3 of 13 in the default config with NER on -- pre-existing, untouched here, and newly visible only because the corpus now exists.
 - 55 new tests in `test/test_detection_v0123.js`, mirroring the Python file one for one.
 
 ## [0.12.2] - 2026-09-17

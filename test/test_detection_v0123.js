@@ -152,13 +152,27 @@ describe('v0.12.3 false positives, as a number', () => {
     });
   }
 
-  it('false-positive rate is zero on the corpus', () => {
+  it('credit-card false-positive rate is zero on the corpus', () => {
     // Stated as a number so a regression shows up as one. The first warning
     // that fires on something obviously not a card is what makes a user stop
     // believing the next one.
+    //
+    // Read the scope honestly: this counts CREDIT_CARD false positives, and
+    // this shield is regex-only. It is not the rate a user experiences --
+    // with NER on, a git SHA comes back as a PERSON and a bare word as an
+    // ORG, and a build number is read as a PHONE even regex-only. None of
+    // that is new; it is visible only because the corpus now exists.
     const hits = NOT_PII.filter(([, t]) => san(t).includes('[CREDIT_CARD_'))
       .map(([l]) => l);
     assert.deepEqual(hits, []);
+  });
+
+  it('records the other categories this corpus trips, regex-only', () => {
+    // Pinned so the next person to work on false positives starts from a
+    // measured number instead of rediscovering it.
+    const hits = NOT_PII.filter(([, t]) => /\[[A-Z_]+_\d+\]/.test(san(t)))
+      .map(([l]) => l).sort();
+    assert.deepEqual(hits, ['semver-ish build']);
   });
 });
 
