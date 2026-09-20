@@ -1,5 +1,5 @@
 /**
- * Detection Benchmark Harness — measures recall/precision/F1 per category.
+ * Detection Benchmark Harness -- measures recall/precision/F1 per category.
  *
  * Usage:
  *   node benchmarks/evaluate.js [--json]
@@ -137,7 +137,7 @@ function evaluate(shield, corpus) {
     const matchedGt = new Set();
     const matchedDet = new Set();
 
-    // Greedy 1:1 matching — first match wins
+    // Greedy 1:1 matching -- first match wins
     for (let di = 0; di < detections.length; di++) {
       const det = detections[di];
       for (let gi = 0; gi < groundTruth.length; gi++) {

@@ -11,7 +11,7 @@ let nlp = null;
 try {
   nlp = require('compromise');
 } catch {
-  // compromise not installed — NER disabled
+  // compromise not installed -- NER disabled
 }
 
 const MAX_NER_TEXT_LENGTH = 100_000;
@@ -39,11 +39,11 @@ class NerDetector {
     const doc = nlp(text);
     const detections = [];
 
-    // People → PERSON
+    // People -> PERSON
     this._extractEntities(doc.people(), text, 'PERSON', 0.80, coveredSpans, detections);
-    // Organizations → ORG
+    // Organizations -> ORG
     this._extractEntities(doc.organizations(), text, 'ORG', 0.75, coveredSpans, detections);
-    // Places → GPE
+    // Places -> GPE
     this._extractEntities(doc.places(), text, 'GPE', 0.75, coveredSpans, detections);
 
     // Organizations named only by COORDINATION: "Microsoft and Amazon".

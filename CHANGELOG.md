@@ -5,6 +5,26 @@ All notable changes to CloakLLM (JavaScript) will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.6] - 2026-09-20
+
+Patch release. Re-aligns the three packages on one version number: v0.12.5 went to npm alone because the crash it fixed was JavaScript-only, so Python and MCP move 0.12.4 -> 0.12.6 here and there is no 0.12.5 for them.
+
+Everything here came out of a full-workspace audit (`AUDIT_endtoend_2026-09-20.md`), which began from a single fact: the six NER tests in this package had **never once executed**. `compromise` was in no dependency list, so they skipped on every run, everywhere, always, while the suite reported green. Installing it revealed one real defect and one broken measuring instrument.
+
+### Fixed
+- **A NER guess could outrank a category you defined.** Pass order in the detection pipeline *is* precedence -- whichever pass claims a span keeps it -- and the order was regex -> NER -> LLM. So with `customLlmCategories: [{ name: 'PATIENT_ID', ... }]`, the text `"Patient PAT-12345 was admitted"` came back as `"Patient [PERSON_0]-12345 was admitted"`. **No PII leaked** -- the value is still tokenised either way -- but you asked for PATIENT_ID and silently got PERSON, which corrupts `entityDetails` and anything downstream keyed on the category. The order is now **regex -> LLM -> NER**: regex stays first because it is structural and the most certain, an explicitly configured category is a stronger statement of intent than a probabilistic guess, and NER is the fuzziest pass so it goes last. Safe because the two do not compete -- when NER is available the LLM is told to skip PERSON/ORG/GPE, so it cannot take them by going first; when NER is absent it keeps them, which is the only way they are detected at all. The Python SDK had the identical latent flaw and is fixed in the same round.
+- **ORG detection missed the second half of a coordinated pair.** `compromise` tags "Amazon" in *"Microsoft and Amazon"* as a proper noun but not an organisation, so one of the two was caught and the other was not. Coordination shares type, so an unrecognised proper noun conjoined to a **confirmed** `#Organization` is now treated as one, at lower confidence because it is inferred from a neighbour rather than from the term itself. Anchoring on a confirmed organisation is what makes this safe, and the obvious alternatives were measured before being rejected: treating every `#Acronym` as an organisation swallows DNS, API, JWT and UUID, and every `#ProperNoun` swallows every capitalised word. ORG recall **75% -> 88%** at 88% precision. `MIT` is still missed deliberately -- catching bare acronyms costs far more precision than it buys.
+
+### Testing
+- **`compromise` added to `devDependencies`,** so the NER suite can never go untested again. **Runtime dependencies remain zero** -- the packed-tarball smoke test in CI still installs with none. **906 tests, 0 skipped, 0 failing** with it present; 900 pass and 6 skip without it, so both install paths are green.
+- A literal NUL byte and a literal `U+202E` right-to-left override in `test/test_v071_extensions.js` replaced with escapes. They worked -- both are valid characters in a JS string -- but git classified the file as **binary**, so it could not be diffed, reviewed or blamed. That file is the adversarial suite proving the audit schema validator *rejects* control characters; it was unreviewable because of control characters. The Python mirror already used escapes, so the hand-mirrored pair had silently diverged.
+
+### Changed
+- **The detection benchmark was reporting a defect that did not exist.** Precision read **72.0%**, below this project's own 80% gate, and the first conclusion drawn from it -- that the NER pass was false-positive-heavy -- was wrong. `loadCorpus` stripped PERSON/ORG/GPE from the **ground truth** unconditionally, on a premise stated in its own docstring ("JS has no spaCy NER") that was true when written and false the moment `compromise` was installed, and detections were never filtered to match. Every NER detection was scored against ground truth that had been deleted: 32 guaranteed false positives, 0 possible true positives. Ground truth is now kept when a NER backend is actually available -- asked of the module rather than assumed -- and NER categories are scored only where the corpus makes a claim about them (`ner` and `multi`, which annotate them, plus `negative`, which contains no PII at all so a hit there is genuine). **P=72.0% -> 98.2%, R=98.2%.** Detection did not change; the ruler did. `benchmarks/evaluate.py` carries the identical rule.
+
+### Unchanged and re-verified
+Suite at **906 passing, 0 skipped**. Cross-SDK regex differential **0 divergences across 198 inputs**; `npm audit` 0 vulnerabilities.
+
 ## [0.12.5] - 2026-09-20
 
 ### Fixed
