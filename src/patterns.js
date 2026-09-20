@@ -32,7 +32,27 @@ const PATTERNS = {
     // by CC and partially eaten by PHONE, leaking the trailing group. A back-
     // referenced separator (\1 / \2) keeps grouping consistent. Precedes PHONE
     // so the full card span is claimed first via coveredSpans.
-    pattern: /(?<!\d)(?:(?:4\d{3}|5[1-5]\d{2}|6011|65\d{2})([ -]?)\d{4}\1\d{4}\1\d{4}|3[47]\d{2}([ -]?)\d{6}\2\d{5})(?!\d)/g,
+    //
+    // v0.12.3: the issuer list had stopped at Visa / 5-series Mastercard /
+    // Amex / Discover, so Luhn-valid cards on three live ranges were MISSED
+    // ENTIRELY -- a leak, not a false positive:
+    //   * Mastercard 2-series (2221-2720), issued since 2017
+    //   * JCB (3528-3589)
+    //   * UnionPay (62), the largest network in the world by volume
+    // Discover's 644-649 range was missing too. The recall benchmark could
+    // not have caught any of it: its corpus only held Visa, 5-series
+    // Mastercard and Amex.
+    //
+    // The prefixes stay explicit rather than becoming "any 13-19 digit run
+    // validated by Luhn". Luhn alone passes one in ten random digit runs,
+    // which on a developer's order ids and timestamps is a false-positive
+    // engine. Prefix AND checksum, not either alone.
+    // Maestro (50, 56-69, 12-19 digits) is deliberately NOT covered. Its
+    // range is so broad it overlaps most of the others and a great many
+    // ordinary numbers, and Luhn alone admits one in ten candidates -- so
+    // adding it would buy a little recall for a lot of false positives.
+    // The test suite asserts the gap so it stays a decision.
+    pattern: /(?<!\d)(?:(?:4\d{3}|5[1-5]\d{2}|222[1-9]|22[3-9]\d|2[3-6]\d{2}|27[01]\d|2720|352[89]|35[3-8]\d|6011|62\d{2}|64[4-9]\d|65\d{2})([ -]?)\d{4}\1\d{4}\1\d{4}|3[47]\d{2}([ -]?)\d{6}\2\d{5}|3(?:0[0-5]\d|6\d{2}|8\d{2})([ -]?)\d{6}\3\d{4}|62\d{15,17})(?!\d)/g,
     configKey: 'detectCreditCards',
   },
   IBAN: {
@@ -81,4 +101,40 @@ const PATTERNS = {
   },
 };
 
-module.exports = { PATTERNS };
+/**
+ * Does this digit run pass the Luhn checksum every card issuer uses?
+ *
+ * Applied to CREDIT_CARD matches so that a number which merely looks like a
+ * card is not reported as one. Without it the standard test Visa with a
+ * deliberately broken check digit (4111111111111112) was flagged, and the
+ * first warning that fires on something obviously not a card is what makes
+ * a user stop believing the next one.
+ *
+ * Separators are ignored, so it works on "4111 1111 1111 1111" as written.
+ * Mirrors cloakllm-py's detector.luhn_valid exactly.
+ *
+ * @param {string} number
+ * @returns {boolean}
+ */
+function luhnValid(number) {
+  const digits = [];
+  for (const ch of String(number)) {
+    if (ch >= '0' && ch <= '9') digits.push(ch.charCodeAt(0) - 48);
+  }
+  if (digits.length < 12) return false;
+  // Double every second digit counting from the RIGHT. Indexing from the
+  // left instead, that is every index congruent to length % 2.
+  const parity = digits.length % 2;
+  let total = 0;
+  for (let i = 0; i < digits.length; i += 1) {
+    let digit = digits[i];
+    if (i % 2 === parity) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    total += digit;
+  }
+  return total % 10 === 0;
+}
+
+module.exports = { PATTERNS, luhnValid };

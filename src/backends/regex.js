@@ -13,7 +13,7 @@ const { LOCALE_PATTERNS } = require('../locale-patterns');
 // dependencies -- bundlers follow requires inside function bodies, so a
 // detection-only browser/worker build dragged in the whole Ollama path.
 // This also removes the former detector.js <-> regex.js circular dependency.
-const { PATTERNS } = require('../patterns');
+const { PATTERNS, luhnValid } = require('../patterns');
 
 class RegexBackend extends DetectorBackend {
   /**
@@ -31,6 +31,14 @@ class RegexBackend extends DetectorBackend {
 
   _testRegexSafety(regex) {
     // v0.6.1 H1.2: expanded corpus for previously-skipped built-ins.
+    //
+    // v0.12.3: measured in CPU time, not wall clock. Catastrophic
+    // backtracking is CPU burn, so CPU time is what characterises it; wall
+    // clock additionally measures whatever else the machine is doing. That
+    // matters because failing this check SKIPS the pattern -- detection for
+    // that category is silently switched off -- so on a wall-clock
+    // threshold a busy machine could quietly stop detecting. EMAIL had only
+    // ~6x of headroom where other patterns had 100x-1300x.
     const inputs = [
       'a'.repeat(25) + '!',
       '1'.repeat(25) + '!',
@@ -44,9 +52,11 @@ class RegexBackend extends DetectorBackend {
       'sk_' + 'a'.repeat(1000),       // API_KEY long bearer
     ];
     for (const input of inputs) {
-      const start = performance.now();
+      // process.cpuUsage() is microseconds of user+system CPU.
+      const start = process.cpuUsage();
       new RegExp(regex.source, regex.flags).exec(input);
-      if ((performance.now() - start) >= 100) return false;
+      const used = process.cpuUsage(start);
+      if ((used.user + used.system) / 1000 >= 100) return false;
     }
     return true;
   }
@@ -120,6 +130,11 @@ class RegexBackend extends DetectorBackend {
           const digits = match[0].replace(/[-.\s()+]/g, '');
           if (digits.length < 7) continue;
         }
+
+        // v0.12.3: prefix alone is not enough. Rejecting here rather than in
+        // the regex also leaves the span UNCOVERED, so a number that merely
+        // looked like a card stays available to the patterns that follow.
+        if (name === 'CREDIT_CARD' && !luhnValid(match[0])) continue;
 
         detections.push({
           text: match[0],
