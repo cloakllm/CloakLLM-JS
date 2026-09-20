@@ -75,7 +75,23 @@ const PATTERNS = {
     // NOTHING -- without separators this alternation covers at most 8 digits
     // and the \d boundaries force whole-run coverage. Deliberately not patched
     // here; the fix trades against the bare-digit-run false-positive class.
-    pattern: /(?<!\d)(?:(?:\+\d{1,3}[-.\s])?(?:\(\d{2,4}\)[-.\s]?|\d{2,4}[-.\s])?\d{3,4}[-.\s]?\d{3,4}|\d{2}(?:[-.\s]\d{2}){3,4})(?!\d)/g,
+    // v0.12.4: contiguous numbers -- no separators at all -- were COMPLETELY
+    // undetected, including every bare US 10-digit number. Two alternatives
+    // close that, gated very differently:
+    //
+    //   E.164 (+4420...) needs no gate. A leading "+" is the writer
+    //   declaring this is a phone number; nothing else is shaped that way.
+    //
+    //   A bare NANP-shaped run does. "2026091912" is a plausible Washington
+    //   DC number AND a plausible invoice id, and roughly 64% of random
+    //   10-digit ids satisfy the shape, so shape alone is a false-positive
+    //   engine. detect() therefore additionally requires a phone keyword
+    //   nearby -- regex proposes, code disposes, as with the Luhn check.
+    //
+    // NANP structure does some of the work: area code and exchange both
+    // start 2-9 and neither may be N11 (411, 911, ...), which alone rejects
+    // every unix timestamp in seconds.
+    pattern: /(?<!\d)(?:(?:\+\d{1,3}[-.\s])?(?:\(\d{2,4}\)[-.\s]?|\d{2,4}[-.\s])?\d{3,4}[-.\s]?\d{3,4}|\d{2}(?:[-.\s]\d{2}){3,4})(?!\d)|(?<![\d+])\+[1-9]\d{7,14}(?!\d)|(?<!\d)1?[2-9](?:0[1-9]|[1-9]\d)[2-9](?:0[1-9]|[1-9]\d)\d{4}(?!\d)/g,
     configKey: 'detectPhones',
   },
   IP_ADDRESS: {
@@ -137,4 +153,35 @@ function luhnValid(number) {
   return total % 10 === 0;
 }
 
-module.exports = { PATTERNS, luhnValid };
+// v0.12.4: a bare digit run only counts as a phone number when something
+// nearby says so. Anchored to the end of the preceding window, so "call
+// about order 9876543210" does NOT qualify -- the keyword has to be next
+// to the number, not merely in the sentence.
+// Up to two short filler words may sit between the keyword and the number,
+// because "reach me on", "call him at" and "contact us on" are how people
+// write. The 4-character cap is what keeps it honest: it admits
+// me/him/her/us/at/on/is and refuses "about", "order", "invoice", "ticket"
+// and "reference". "number" is allowed explicitly -- "phone number is X" is
+// too common to miss -- and is safe because it is only ever reached AFTER a
+// phone keyword, so "order number X" still has nothing to open the gate.
+const PHONE_CONTEXT_RE =
+  /(?:call(?:ed|ing)?|phone|telephone|tel|mobile|cell|fax|contact|reach|dial|ring|whatsapp|sms|text)(?:\W+(?:\w{1,4}|numbers?)){0,2}\W{0,4}$/i;
+const PHONE_CONTEXT_WINDOW = 28;
+
+/**
+ * Does a phone keyword sit immediately before this position?
+ *
+ * Only consulted for CONTIGUOUS digit runs. A number written with
+ * separators, or with a leading +, has already declared itself.
+ * Mirrors cloakllm-py's detector.has_phone_context exactly.
+ *
+ * @param {string} text
+ * @param {number} start
+ * @returns {boolean}
+ */
+function hasPhoneContext(text, start) {
+  const from = Math.max(0, start - PHONE_CONTEXT_WINDOW);
+  return PHONE_CONTEXT_RE.test(text.slice(from, start));
+}
+
+module.exports = { PATTERNS, luhnValid, hasPhoneContext };

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * RegexBackend -- regex-based PII detection.
  *
  * Handles custom patterns, locale patterns, and built-in patterns.
@@ -13,7 +13,36 @@ const { LOCALE_PATTERNS } = require('../locale-patterns');
 // dependencies -- bundlers follow requires inside function bodies, so a
 // detection-only browser/worker build dragged in the whole Ollama path.
 // This also removes the former detector.js <-> regex.js circular dependency.
-const { PATTERNS, luhnValid } = require('../patterns');
+const { PATTERNS, luhnValid, hasPhoneContext } = require('../patterns');
+
+/**
+ * A BUILT-IN pattern failed the ReDoS safety check.
+ *
+ * Thrown rather than skipped. A built-in failing here cannot be caused by
+ * user input -- it means one of our own patterns regressed -- and the
+ * alternative is to carry on with that category's detection silently
+ * switched off, which in a PII tool is the worst available outcome.
+ *
+ * Custom and locale patterns are still skipped with a warning: a user's
+ * own regex should not be able to stop the SDK from starting.
+ */
+class PatternSafetyError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'PatternSafetyError';
+  }
+}
+
+// Two budgets, because the check means two different things (v0.12.4).
+// For a CUSTOM or locale pattern it is a real boundary against a regex we
+// did not write, so it stays tight. For a BUILT-IN it is a regression
+// canary -- a user cannot change our patterns -- and since a failing
+// built-in now THROWS, a tight budget would turn a merely slow machine
+// into one where the SDK refuses to start. Catastrophic backtracking is
+// exponential and blows past a second on these probes, so 1s still
+// catches the thing this is for while leaving room for slow hardware.
+const SAFETY_BUDGET_MS = 100;
+const BUILTIN_SAFETY_BUDGET_MS = 1000;
 
 class RegexBackend extends DetectorBackend {
   /**
@@ -29,7 +58,7 @@ class RegexBackend extends DetectorBackend {
     return 'regex';
   }
 
-  _testRegexSafety(regex) {
+  _measureRegexSafety(regex) {
     // v0.6.1 H1.2: expanded corpus for previously-skipped built-ins.
     //
     // v0.12.3: measured in CPU time, not wall clock. Catastrophic
@@ -51,14 +80,19 @@ class RegexBackend extends DetectorBackend {
       '1234-'.repeat(1000),           // PHONE separators
       'sk_' + 'a'.repeat(1000),       // API_KEY long bearer
     ];
+    let worst = 0;
     for (const input of inputs) {
       // process.cpuUsage() is microseconds of user+system CPU.
       const start = process.cpuUsage();
       new RegExp(regex.source, regex.flags).exec(input);
       const used = process.cpuUsage(start);
-      if ((used.user + used.system) / 1000 >= 100) return false;
+      worst = Math.max(worst, (used.user + used.system) / 1000);
     }
-    return true;
+    return worst;
+  }
+
+  _testRegexSafety(regex) {
+    return this._measureRegexSafety(regex) < SAFETY_BUDGET_MS;
   }
 
   _buildPatterns() {
@@ -83,6 +117,15 @@ class RegexBackend extends DetectorBackend {
     for (const [name, pattern] of localePatterns) {
       if (this._testRegexSafety(pattern)) {
         compiled.push({ name, pattern: new RegExp(pattern.source, pattern.flags) });
+      } else {
+        // v0.12.4: this branch used to be silent, which is the same
+        // fail-open with the volume turned all the way down -- a locale's
+        // detection would just quietly not happen. Not thrown, because a
+        // locale pack is data rather than core code, but no longer invisible.
+        console.warn(
+          `CloakLLM: locale pattern '${name}' for locale '${this.config.locale}' ` +
+          `failed the ReDoS safety check - skipped. That category will NOT be detected.`
+        );
       }
     }
 
@@ -92,13 +135,21 @@ class RegexBackend extends DetectorBackend {
     // been shipping since v0.1.0.
     for (const [name, { pattern, configKey }] of Object.entries(PATTERNS)) {
       if (this.config[configKey] === false) continue;
-      if (!this._testRegexSafety(pattern)) {
-        console.warn(
-          `CloakLLM: built-in pattern '${name}' failed ReDoS safety check ` +
-          `(potential catastrophic backtracking) - skipped. This indicates ` +
-          `a regression. Please file a bug.`
+      // v0.12.4: THROW, do not skip. Skipping left the process running with
+      // this category's detection silently switched off, which is fail-open
+      // in a tool whose entire job is not to miss things. A built-in failing
+      // here cannot be provoked by user input -- it is our own regression,
+      // exactly as the message has always said -- so refusing to start is
+      // the honest response, and CI catches it long before a user does.
+      const worst = this._measureRegexSafety(pattern);
+      if (worst >= BUILTIN_SAFETY_BUDGET_MS) {
+        throw new PatternSafetyError(
+          `CloakLLM: built-in pattern '${name}' failed the ReDoS safety check ` +
+          `(${worst.toFixed(0)} ms of CPU against a ${BUILTIN_SAFETY_BUDGET_MS} ms ` +
+          `budget). This is a regression in CloakLLM, not in your input. ` +
+          `Refusing to start rather than run with '${name}' detection silently ` +
+          `disabled. Please file a bug.`
         );
-        continue;
       }
       compiled.push({ name, pattern });
     }
@@ -129,6 +180,13 @@ class RegexBackend extends DetectorBackend {
         if (name === 'PHONE') {
           const digits = match[0].replace(/[-.\s()+]/g, '');
           if (digits.length < 7) continue;
+          // v0.12.4: a CONTIGUOUS digit run is only a phone number if
+          // something nearby says so. Separated forms and E.164 have
+          // already declared themselves and are not gated. Verified purely
+          // additive: the only all-digit match the previous pattern made
+          // anywhere in the corpora was "14159265", the digits of pi,
+          // which was itself a false positive.
+          if (/^\d+$/.test(match[0]) && !hasPhoneContext(text, start)) continue;
         }
 
         // v0.12.3: prefix alone is not enough. Rejecting here rather than in
@@ -152,4 +210,4 @@ class RegexBackend extends DetectorBackend {
   }
 }
 
-module.exports = { RegexBackend };
+module.exports = { RegexBackend, PatternSafetyError };

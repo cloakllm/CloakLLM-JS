@@ -170,9 +170,15 @@ describe('v0.12.3 false positives, as a number', () => {
   it('records the other categories this corpus trips, regex-only', () => {
     // Pinned so the next person to work on false positives starts from a
     // measured number instead of rediscovering it.
+    //
+    // v0.12.4 emptied this list: "semver-ish build" was here because its
+    // 8-digit prefix read as a PHONE, and the contiguous-phone context
+    // gate drops bare digit runs with no keyword near them. The list
+    // shrinking is the gate working -- and this assertion going red is it
+    // being noticed rather than absorbed.
     const hits = NOT_PII.filter(([, t]) => /\[[A-Z_]+_\d+\]/.test(san(t)))
       .map(([l]) => l).sort();
-    assert.deepEqual(hits, ['semver-ish build']);
+    assert.deepEqual(hits, []);
   });
 });
 
