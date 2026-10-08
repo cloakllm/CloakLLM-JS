@@ -16,6 +16,39 @@ try {
 
 const MAX_NER_TEXT_LENGTH = 100_000;
 
+// Characters that can sit at the edge of a NER span but are never part of a
+// name. The period is deliberately absent: "Acme Inc." ends in one.
+const NER_EDGE_CHARS = new Set("'\"`()[]{}<>,;: \t\r\n");
+// A NER span containing any of these is code, not a name: a call such as
+// ObjectId( -- a letter directly followed by "(" -- braces, angle brackets,
+// "=", or a run of five or more digits. "John (Jack) Smith" is unaffected:
+// its bracket follows a space. Square brackets are deliberately NOT here:
+// "jane[at]example[dot]org" is how people obfuscate an email, and a NER tag
+// on it is what keeps it from leaking -- the hard corpus caught a first
+// version of this rule that let it through.
+const NER_CODE_RE = /[A-Za-z_]\(|[{}<>=]|\d{5,}/;
+
+/**
+ * Tidy a NER span, or reject it. Returns [start, end] or null.
+ *
+ * v0.12.7 (cloakllm/CloakLLM#10). spaCy, reading a Python dict printed as
+ * text, returned the name AND its closing quote, and returned
+ * ObjectId('68cfeb61...') as a place. compromise was not affected on that
+ * input, but both SDKs apply the same rule so they cannot drift apart.
+ * Mirrors cloakllm-py's detector.clean_ner_span exactly.
+ *
+ * @param {string} text
+ * @param {number} start
+ * @param {number} end
+ * @returns {[number, number] | null}
+ */
+function cleanNerSpan(text, start, end) {
+  while (start < end && NER_EDGE_CHARS.has(text[start])) start += 1;
+  while (end > start && NER_EDGE_CHARS.has(text[end - 1])) end -= 1;
+  if (end - start < 2 || NER_CODE_RE.test(text.slice(start, end))) return null;
+  return [start, end];
+}
+
 class NerDetector {
   constructor() {
     if (!nlp) {
@@ -97,8 +130,12 @@ class NerDetector {
         continue;
       }
 
-      const start = firstTerm.offset.start;
-      const end = lastTerm.offset.start + lastTerm.offset.length;
+      // v0.12.7 (#10): trim quotes/brackets off the edges, drop code.
+      const span = cleanNerSpan(
+        text, firstTerm.offset.start, lastTerm.offset.start + lastTerm.offset.length,
+      );
+      if (!span) continue;
+      const [start, end] = span;
 
       // Skip if overlapping with already-detected spans
       if (coveredSpans.some(([s, e]) => start < e && end > s)) continue;
@@ -124,11 +161,12 @@ class NerDetector {
     const regex = new RegExp(escaped, 'gi');
     let match;
     while ((match = regex.exec(text)) !== null) {
-      const start = match.index;
-      const end = start + match[0].length;
+      const span = cleanNerSpan(text, match.index, match.index + match[0].length);
+      if (!span) continue;
+      const [start, end] = span;
       if (coveredSpans.some(([s, e]) => start < e && end > s)) continue;
       detections.push({
-        text: match[0], category, start, end, confidence, source: 'ner',
+        text: text.slice(start, end), category, start, end, confidence, source: 'ner',
       });
       coveredSpans.push([start, end]);
     }
@@ -143,4 +181,4 @@ function isNerAvailable() {
   return nlp !== null;
 }
 
-module.exports = { NerDetector, isNerAvailable };
+module.exports = { NerDetector, isNerAvailable, cleanNerSpan };

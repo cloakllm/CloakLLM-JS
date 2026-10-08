@@ -184,4 +184,42 @@ function hasPhoneContext(text, start) {
   return PHONE_CONTEXT_RE.test(text.slice(from, start));
 }
 
-module.exports = { PATTERNS, luhnValid, hasPhoneContext };
+const NUMERIC_CHARS = new Set('0123456789.');
+
+/**
+ * Does this match lie inside a decimal number?
+ *
+ * v0.12.7 (cloakllm/CloakLLM#10). Before this, numeric data was rewritten as
+ * personal data. In 6,016 random decimals on the default config, 1,152 were
+ * tagged: the integer part of 764623112.909 as SSN, 237.07924402 as PHONE, a
+ * Luhn-valid 16-digit fraction as CREDIT_CARD. With a locale set it was far
+ * more, because several locale phone patterns have no digit boundary and
+ * match from the MIDDLE of a number. A market_value or a coordinate sent to
+ * a model came back corrupted.
+ *
+ * The test looks at the whole number around the match, not just the
+ * characters touching it: extend outwards over digits and dots, drop a
+ * trailing sentence period, and ask whether what remains is a decimal --
+ * digits, exactly ONE dot, digits. Version strings (1.2.3), IP addresses and
+ * dotted phone numbers (1.800.555.1234, 555.123.4567) have more than one dot
+ * and are unaffected. So is "ssn: 123456789." -- a trailing period is
+ * punctuation, not a fraction.
+ * Mirrors cloakllm-py's detector.in_decimal_number exactly.
+ *
+ * @param {string} text
+ * @param {number} start
+ * @param {number} end
+ * @returns {boolean}
+ */
+function inDecimalNumber(text, start, end) {
+  let left = start;
+  while (left > 0 && NUMERIC_CHARS.has(text[left - 1])) left -= 1;
+  let right = end;
+  while (right < text.length && NUMERIC_CHARS.has(text[right])) right += 1;
+  const token = text.slice(left, right).replace(/\.+$/, '');
+  return /^\d+\.\d+$/.test(token);
+}
+
+module.exports = {
+  PATTERNS, luhnValid, hasPhoneContext, inDecimalNumber,
+};

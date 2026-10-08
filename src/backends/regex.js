@@ -13,7 +13,9 @@ const { LOCALE_PATTERNS } = require('../locale-patterns');
 // dependencies -- bundlers follow requires inside function bodies, so a
 // detection-only browser/worker build dragged in the whole Ollama path.
 // This also removes the former detector.js <-> regex.js circular dependency.
-const { PATTERNS, luhnValid, hasPhoneContext } = require('../patterns');
+const {
+  PATTERNS, luhnValid, hasPhoneContext, inDecimalNumber,
+} = require('../patterns');
 
 /**
  * A BUILT-IN pattern failed the ReDoS safety check.
@@ -122,7 +124,10 @@ class RegexBackend extends DetectorBackend {
           console.warn(`CloakLLM: Custom pattern '${name}' failed safety check (potential ReDoS) - skipped`);
           continue;
         }
-        compiled.push({ name, pattern: regex });
+        // Custom patterns are the user's own regexes and are matched
+        // exactly as written; the decimal gate in detect() applies only to
+        // ours.
+        compiled.push({ name, pattern: regex, custom: true });
       } catch (err) {
         console.warn(`CloakLLM: Invalid custom pattern '${name}': ${err.message} - skipped`);
       }
@@ -181,7 +186,7 @@ class RegexBackend extends DetectorBackend {
   detect(text, coveredSpans) {
     const detections = [];
 
-    for (const { name, pattern } of this._compiledPatterns) {
+    for (const { name, pattern, custom } of this._compiledPatterns) {
       const regex = new RegExp(pattern.source, pattern.flags);
       let match;
 
@@ -192,6 +197,14 @@ class RegexBackend extends DetectorBackend {
         if (coveredSpans.some(([s, e]) => start < e && end > s)) {
           continue;
         }
+
+        // v0.12.7 (#10): part of a decimal number is not personal data.
+        // Rejected here so the span stays uncovered. A phone number written
+        // as digits.digits looks exactly like one, so a phone category keeps
+        // it when a phone keyword is right before it -- the gate contiguous
+        // NANP numbers use.
+        if (!custom && inDecimalNumber(text, start, end)
+            && !(name.startsWith('PHONE') && hasPhoneContext(text, start))) continue;
 
         if (name === 'PHONE') {
           const digits = match[0].replace(/[-.\s()+]/g, '');
