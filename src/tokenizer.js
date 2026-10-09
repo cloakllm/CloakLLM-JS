@@ -8,6 +8,7 @@
 
 const crypto = require('crypto');
 const { GENERALIZED_CATEGORIES, generalize } = require('./clinical-dates');
+const { zip3 } = require('./clinical-geo');
 
 const {
   CLOAKLLM_TOKEN_REGEX: TOKEN_PATTERN,
@@ -110,7 +111,7 @@ class TokenMap {
       } else {
         const key = det.text.trim();
         token = this.forward.get(key) ?? '';
-        if (!token && GENERALIZED_CATEGORIES.has(det.category)) {
+        if (!token && (GENERALIZED_CATEGORIES.has(det.category) || det.category === 'ZIP')) {
           // Replaced by its Safe Harbor form, which is derived from the
           // value, so it is not echoed here.
           token = `[${det.category}_GENERALIZED]`;
@@ -185,13 +186,19 @@ class Tokenizer {
     let result = this.escapeExistingTokens(text);
     const generalizeDates = (this.config && this.config.dateMode === 'generalize_year')
       && tokenMap.mode !== 'redact';
+    const zip3Mode = (this.config && this.config.zipMode === 'zip3') && tokenMap.mode !== 'redact';
     for (let i = detections.length - 1; i >= 0; i--) {
       const det = detections[i];
-      // v0.13.0: Safe Harbor form (year / "90+"), irreversible and never
-      // stored in the token map.
-      const token = generalizeDates && GENERALIZED_CATEGORIES.has(det.category)
-        ? generalize(det.category, det.text)
-        : tokenMap.getOrCreate(det.text, det.category);
+      // v0.13.0: Safe Harbor forms (year / "90+" / ZIP3), irreversible and
+      // never stored in the token map.
+      let token;
+      if (generalizeDates && GENERALIZED_CATEGORIES.has(det.category)) {
+        token = generalize(det.category, det.text);
+      } else if (zip3Mode && det.category === 'ZIP') {
+        token = zip3(det.text, this.config.zip3Restricted);
+      } else {
+        token = tokenMap.getOrCreate(det.text, det.category);
+      }
       result = result.slice(0, det.start) + token + result.slice(det.end);
       tokenMap.detections.push(det);
     }

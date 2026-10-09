@@ -17,6 +17,12 @@ export interface ShieldConfigOptions {
   detectAgesOver89?: boolean;
   /** v0.13.0: US healthcare identifiers (MRN, member/Medicaid IDs, NPI, MBI, HICN, DEA, partial SSN...). Off; opt-in. */
   detectUsHealthIds?: boolean;
+  /** v0.13.0: US ZIP codes in address context. Off; opt-in. */
+  detectZipCodes?: boolean;
+  /** v0.13.0: 'zip3' = Safe Harbor form (first three digits + XX, 000XX if restricted). */
+  zipMode?: 'tokenize' | 'zip3';
+  /** v0.13.0: overrides the HHS Census-2000 restricted ZIP3 list. */
+  zip3Restricted?: Iterable<string>;
   /** v0.13.0: 'generalize_year' = Safe Harbor form (year / 90+), irreversible. */
   dateMode?: 'tokenize' | 'generalize_year';
   customPatterns?: Array<{ name: string; pattern: string }>;
@@ -90,6 +96,9 @@ export class ShieldConfig {
   detectDates: boolean;
   detectAgesOver89: boolean;
   detectUsHealthIds: boolean;
+  detectZipCodes: boolean;
+  zipMode: 'tokenize' | 'zip3';
+  zip3Restricted: Set<string> | null;
   dateMode: 'tokenize' | 'generalize_year';
   customPatterns: Array<{ name: string; pattern: string }>;
   customLlmCategories: Array<{ name: string; description?: string }>;

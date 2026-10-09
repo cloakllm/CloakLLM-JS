@@ -79,6 +79,22 @@ class ShieldConfig {
     this.detectAgesOver89 = options.detectAgesOver89 ?? false;
     // v0.13.0: US healthcare identifiers (see clinical-ids.js). Off, opt-in.
     this.detectUsHealthIds = options.detectUsHealthIds ?? false;
+    // v0.13.0: US ZIP codes in address context (see clinical-geo.js). Off,
+    // opt-in. zipMode 'zip3' = Safe Harbor form, irreversible.
+    this.detectZipCodes = options.detectZipCodes ?? false;
+    this.zipMode = options.zipMode ?? 'tokenize';
+    if (this.zipMode !== 'tokenize' && this.zipMode !== 'zip3') {
+      throw new Error(`Invalid zipMode '${this.zipMode}'. Must be 'tokenize' or 'zip3'.`);
+    }
+    this.zip3Restricted = null;
+    if (options.zip3Restricted != null) {
+      const list = [...options.zip3Restricted];
+      const bad = list.filter((z) => typeof z !== 'string' || !/^\d{3}$/.test(z));
+      if (bad.length) {
+        throw new Error(`zip3Restricted must contain three-digit strings, got ${JSON.stringify(bad.slice(0, 3))}.`);
+      }
+      this.zip3Restricted = new Set(list);
+    }
     // 'tokenize' -> [DATE_0], restored on desanitize.
     // 'generalize_year' -> the Safe Harbor form (four-digit year, or
     // [DATE_REDACTED]; "90+" for an age). Irreversible, like mode 'redact'.

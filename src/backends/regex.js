@@ -200,7 +200,7 @@ class RegexBackend extends DetectorBackend {
         // v0.13.0: a label-gated pattern matches LABEL + VALUE; only the value
         // (its single capture group, which ends the match) is detected, so
         // the label stays readable.
-        const start = (!custom && VALUE_GROUP_CATEGORIES.has(name))
+        const start = (!custom && (VALUE_GROUP_CATEGORIES.has(name) || name === 'ZIP'))
           ? end - match[1].length
           : match.index;
 

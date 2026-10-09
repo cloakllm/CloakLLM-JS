@@ -41,6 +41,7 @@ const REGEX_CATEGORIES = new Set([
   // v0.13.0 US health identifier pack, off by default
   'MRN', 'ACCOUNT_NUMBER', 'HEALTH_PLAN_ID', 'LICENSE_NUMBER', 'NPI',
   'MEDICARE_MBI', 'HICN', 'DEA', 'SSN_PARTIAL',
+  'ZIP', // v0.13.0, off by default
 ]);
 
 /** NER categories (Pass 2). */
@@ -118,6 +119,7 @@ const OPT_IN_CATEGORIES = new Set([
   'DATE', 'AGE_90PLUS',
   'MRN', 'ACCOUNT_NUMBER', 'HEALTH_PLAN_ID', 'LICENSE_NUMBER', 'NPI',
   'MEDICARE_MBI', 'HICN', 'DEA', 'SSN_PARTIAL',
+  'ZIP',
 ]);
 
 /** Reserved categories that custom patterns must not use. */

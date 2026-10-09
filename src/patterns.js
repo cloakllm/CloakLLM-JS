@@ -19,6 +19,7 @@
 
 const { DATE_PATTERN, AGE_PATTERN } = require('./clinical-dates');
 const IDS = require('./clinical-ids');
+const { ZIP_PATTERN } = require('./clinical-geo');
 
 const PATTERNS = {
   EMAIL: {
@@ -38,6 +39,9 @@ const PATTERNS = {
   ACCOUNT_NUMBER: { pattern: new RegExp(IDS.ACCOUNT_PATTERN, 'g'), configKey: 'detectUsHealthIds', optIn: true },
   HEALTH_PLAN_ID: { pattern: new RegExp(IDS.HEALTH_PLAN_PATTERN, 'g'), configKey: 'detectUsHealthIds', optIn: true },
   LICENSE_NUMBER: { pattern: new RegExp(IDS.LICENSE_PATTERN, 'g'), configKey: 'detectUsHealthIds', optIn: true },
+  // v0.13.0 health edition: US ZIP codes in address context only. Opt-in
+  // (detectZipCodes: true). See clinical-geo.js.
+  ZIP: { pattern: new RegExp(ZIP_PATTERN, 'g'), configKey: 'detectZipCodes', optIn: true },
   // v0.13.0 health edition: clinical dates and ages over 89 (HIPAA Safe
   // Harbor item C). optIn: enabled only when the config sets the key to
   // `true`. Every other built-in is on unless set to `false`; these must not
