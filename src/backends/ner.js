@@ -15,7 +15,7 @@ class NerBackend extends DetectorBackend {
     this._nerDetector = null;
     if (isNerAvailable()) {
       try {
-        this._nerDetector = new NerDetector();
+        this._nerDetector = new NerDetector({ extendSurnames: this._config.detectRoleNames === true });
       } catch {
         // compromise load failed -> degrade (handled in detect())
       }

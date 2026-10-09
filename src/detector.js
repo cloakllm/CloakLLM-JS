@@ -78,7 +78,10 @@ class DetectionEngine {
     // Pass 1: Regex (always)
     this._backends.push(new RegexBackend(this.config));
 
-    const nerBackend = new NerBackend();
+    // v0.13.0: pass the config. Without it, nerRequired never reached the
+    // backend through this path (only a directly-constructed NerBackend
+    // honoured it), and neither would detectRoleNames.
+    const nerBackend = new NerBackend(this.config);
 
     // Pass 2: LLM (opt-in)
     if (this.config.llmDetection) {

@@ -84,6 +84,10 @@ class ShieldConfig {
     this.detectZipCodes = options.detectZipCodes ?? false;
     // v0.13.0: US street addresses and PO boxes. Off, opt-in.
     this.detectStreetAddresses = options.detectStreetAddresses ?? false;
+    // v0.13.0: names after a role word or heading a line of identifiers, and
+    // surname completion for one-word NER names (see clinical-names.js).
+    // Emitted as PERSON. Off, opt-in.
+    this.detectRoleNames = options.detectRoleNames ?? false;
     this.zipMode = options.zipMode ?? 'tokenize';
     if (this.zipMode !== 'tokenize' && this.zipMode !== 'zip3') {
       throw new Error(`Invalid zipMode '${this.zipMode}'. Must be 'tokenize' or 'zip3'.`);

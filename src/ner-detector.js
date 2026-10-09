@@ -14,6 +14,8 @@ try {
   // compromise not installed -- NER disabled
 }
 
+const { extendFirstName } = require('./clinical-names');
+
 const MAX_NER_TEXT_LENGTH = 100_000;
 
 // Characters that can sit at the edge of a NER span but are never part of a
@@ -50,12 +52,14 @@ function cleanNerSpan(text, start, end) {
 }
 
 class NerDetector {
-  constructor() {
+  /** @param {{extendSurnames?: boolean}} [options] v0.13.0 surname completion. */
+  constructor(options = {}) {
     if (!nlp) {
       throw new Error(
         'compromise is required for NER detection: npm install compromise'
       );
     }
+    this._extendSurnames = options.extendSurnames === true;
   }
 
   /**
@@ -135,7 +139,15 @@ class NerDetector {
         text, firstTerm.offset.start, lastTerm.offset.start + lastTerm.offset.length,
       );
       if (!span) continue;
-      const [start, end] = span;
+      const start = span[0];
+      let end = span[1];
+      // v0.13.0 health edition: "Thomas" -> "Thomas Parkinson" when NER
+      // stopped at a surname that is also a disease eponym. Kept short if
+      // the surname is already claimed by an earlier pass.
+      if (category === 'PERSON' && this._extendSurnames) {
+        const longer = extendFirstName(text, start, end);
+        if (!coveredSpans.some(([s, e]) => end < e && longer > s)) end = longer;
+      }
 
       // Skip if overlapping with already-detected spans
       if (coveredSpans.some(([s, e]) => start < e && end > s)) continue;

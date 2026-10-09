@@ -11,6 +11,9 @@ const { isValidDate, isAgeOver89 } = require('../clinical-dates');
 const {
   VALUE_GROUP_CATEGORIES, US_HEALTH_ID_CATEGORIES, accept: acceptHealthId,
 } = require('../clinical-ids');
+const {
+  CATEGORY_ALIAS: NAME_CATEGORY_ALIAS, ROLE_NAME_CATEGORIES, trimName,
+} = require('../clinical-names');
 // PATTERNS comes from patterns.js, not detector.js. Importing it from
 // detector.js used to pull in that module's pipeline builder, whose
 // require('./backends/llm') reaches llm-detector.js and its child_process/net
@@ -196,13 +199,22 @@ class RegexBackend extends DetectorBackend {
       let match;
 
       while ((match = regex.exec(text)) !== null) {
-        const end = match.index + match[0].length;
+        let end = match.index + match[0].length;
         // v0.13.0: a label-gated pattern matches LABEL + VALUE; only the value
         // (its single capture group, which ends the match) is detected, so
         // the label stays readable.
-        const start = (!custom && (VALUE_GROUP_CATEGORIES.has(name) || name === 'ZIP'))
+        let start = (!custom && (VALUE_GROUP_CATEGORIES.has(name) || name === 'ZIP'))
           ? end - match[1].length
           : match.index;
+        let category = name;
+        if (!custom && ROLE_NAME_CATEGORIES.has(name)) {
+          // The name is whichever group took part; it ends the match.
+          // Template words are trimmed or reject the match.
+          start = end - match.slice(1).find((g) => g !== undefined).length;
+          end = trimName(text, start, end);
+          if (end === null) continue;
+          category = NAME_CATEGORY_ALIAS[name];
+        }
 
         if (coveredSpans.some(([s, e]) => start < e && end > s)) {
           continue;
@@ -240,7 +252,7 @@ class RegexBackend extends DetectorBackend {
 
         detections.push({
           text: text.slice(start, end), // the value only, for label-gated categories
-          category: name,
+          category,
           start,
           end,
           confidence: 0.95,

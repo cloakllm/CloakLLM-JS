@@ -21,6 +21,8 @@ export interface ShieldConfigOptions {
   detectZipCodes?: boolean;
   /** v0.13.0: US street addresses and PO boxes. Off; opt-in. */
   detectStreetAddresses?: boolean;
+  /** v0.13.0: role-word and header-line names, plus surname completion for one-word NER names; emitted as PERSON. Off; opt-in. */
+  detectRoleNames?: boolean;
   /** v0.13.0: 'zip3' = Safe Harbor form (first three digits + XX, 000XX if restricted). */
   zipMode?: 'tokenize' | 'zip3';
   /** v0.13.0: overrides the HHS Census-2000 restricted ZIP3 list. */
@@ -100,6 +102,7 @@ export class ShieldConfig {
   detectUsHealthIds: boolean;
   detectZipCodes: boolean;
   detectStreetAddresses: boolean;
+  detectRoleNames: boolean;
   zipMode: 'tokenize' | 'zip3';
   zip3Restricted: Set<string> | null;
   dateMode: 'tokenize' | 'generalize_year';

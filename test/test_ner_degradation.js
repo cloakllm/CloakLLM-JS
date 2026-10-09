@@ -29,6 +29,18 @@ describe('v0.11.3 NER degradation', () => {
     assert.throws(() => b.detect('Contact Jane Doe', []), /NER is required/);
   });
 
+  // v0.13.0: the test above builds the backend directly and returns early
+  // when compromise is installed (as in CI), so it never checked the PATH:
+  // DetectionEngine built its NerBackend WITHOUT the config, and through a
+  // Shield nerRequired was silently ignored. This forces NER unavailable on
+  // the Shield's own backend, so it asserts with or without compromise.
+  it('nerRequired=true hard-fails through a Shield, not just a bare backend', () => {
+    const sh = new Shield(new ShieldConfig({ auditEnabled: false, nerRequired: true }));
+    const ner = sh.detector._backends.find((b) => b.name === 'ner');
+    ner._nerDetector = null;
+    assert.throws(() => sh.sanitize('Contact Jane Doe'), /NER is required/);
+  });
+
   it('config exposes nerRequired (default false)', () => {
     assert.equal(new ShieldConfig({}).nerRequired, false);
     assert.equal(new ShieldConfig({ nerRequired: true }).nerRequired, true);

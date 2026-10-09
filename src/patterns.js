@@ -20,6 +20,7 @@
 const { DATE_PATTERN, AGE_PATTERN } = require('./clinical-dates');
 const IDS = require('./clinical-ids');
 const { ZIP_PATTERN, STREET_ADDRESS_PATTERN } = require('./clinical-geo');
+const NAMES = require('./clinical-names');
 
 const PATTERNS = {
   EMAIL: {
@@ -58,6 +59,11 @@ const PATTERNS = {
     configKey: 'detectAgesOver89',
     optIn: true,
   },
+  // v0.13.0 health edition: names after a role word, and names heading a
+  // line of identifiers. Emitted as PERSON. Opt-in (detectRoleNames: true).
+  // See clinical-names.js.
+  ROLE_NAME: { pattern: new RegExp(NAMES.ROLE_NAME_PATTERN, 'g'), configKey: 'detectRoleNames', optIn: true },
+  HEADER_NAME: { pattern: new RegExp(NAMES.HEADER_NAME_PATTERN, 'g'), configKey: 'detectRoleNames', optIn: true },
   SSN: {
     pattern: /\b(?!000|666|9\d{2})\d{3}[-\s]?(?!00)\d{2}[-\s]?(?!0000)\d{4}\b/g,
     configKey: 'detectSsns',
