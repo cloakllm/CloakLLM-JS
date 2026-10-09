@@ -648,6 +648,7 @@ audit-reviewer overview.
 
 - **Multi-language PII detection** — 13 locales with locale-specific regex patterns
   - Supported locales: `de`, `fr`, `es`, `it`, `pt`, `nl`, `pl`, `se`, `no`, `dk`, `fi`, `gb`, `au`
+  - **Correction (2026-10-09):** this list was wrong when published. The locales that shipped, and still ship, are `de`, `fr`, `es`, `nl`, `he`, `zh`, `ja`, `ru`, `ko`, `it`, `pl`, `pt`, `hi`. There was never a `se`, `no`, `dk`, `fi`, `gb` or `au` locale. See the GUIDE's Multi-Language Detection section for what each one detects.
   - Locale-specific patterns for SSN, phone, IBAN, tax IDs, national ID numbers
   - New `locale` config option in `ShieldConfig`
 - **NER via compromise** — optional `compromise` npm package for PERSON, ORG, GPE detection
