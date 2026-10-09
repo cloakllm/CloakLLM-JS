@@ -166,7 +166,7 @@ describe('Category Registry', () => {
     assert.deepStrictEqual(OPT_IN_CATEGORIES, new Set([
       'DATE', 'AGE_90PLUS',
       'MRN', 'ACCOUNT_NUMBER', 'HEALTH_PLAN_ID', 'LICENSE_NUMBER', 'NPI',
-      'MEDICARE_MBI', 'HICN', 'DEA', 'SSN_PARTIAL', 'ZIP',
+      'MEDICARE_MBI', 'HICN', 'DEA', 'SSN_PARTIAL', 'ZIP', 'STREET_ADDRESS',
     ]));
     const expected = new Set([...BUILTIN_CATEGORIES].filter((c) => !OPT_IN_CATEGORIES.has(c)));
     assert.deepStrictEqual(RESERVED_CATEGORIES, expected);

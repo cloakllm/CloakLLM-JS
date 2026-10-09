@@ -82,6 +82,8 @@ class ShieldConfig {
     // v0.13.0: US ZIP codes in address context (see clinical-geo.js). Off,
     // opt-in. zipMode 'zip3' = Safe Harbor form, irreversible.
     this.detectZipCodes = options.detectZipCodes ?? false;
+    // v0.13.0: US street addresses and PO boxes. Off, opt-in.
+    this.detectStreetAddresses = options.detectStreetAddresses ?? false;
     this.zipMode = options.zipMode ?? 'tokenize';
     if (this.zipMode !== 'tokenize' && this.zipMode !== 'zip3') {
       throw new Error(`Invalid zipMode '${this.zipMode}'. Must be 'tokenize' or 'zip3'.`);
