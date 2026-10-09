@@ -38,6 +38,9 @@ const REGEX_CATEGORIES = new Set([
   'EMAIL', 'SSN', 'CREDIT_CARD', 'PHONE', 'IP_ADDRESS',
   'API_KEY', 'AWS_KEY', 'JWT', 'IBAN', 'IL_ID',
   'DATE', 'AGE_90PLUS', // v0.13.0 health edition, off by default
+  // v0.13.0 US health identifier pack, off by default
+  'MRN', 'ACCOUNT_NUMBER', 'HEALTH_PLAN_ID', 'LICENSE_NUMBER', 'NPI',
+  'MEDICARE_MBI', 'HICN', 'DEA', 'SSN_PARTIAL',
 ]);
 
 /** NER categories (Pass 2). */
@@ -111,7 +114,11 @@ const BUILTIN_CATEGORIES = new Set([
  * Built in, but NOT reserved: a user who already had a custom pattern or LLM
  * category called DATE must not get an error on upgrade.
  */
-const OPT_IN_CATEGORIES = new Set(['DATE', 'AGE_90PLUS']);
+const OPT_IN_CATEGORIES = new Set([
+  'DATE', 'AGE_90PLUS',
+  'MRN', 'ACCOUNT_NUMBER', 'HEALTH_PLAN_ID', 'LICENSE_NUMBER', 'NPI',
+  'MEDICARE_MBI', 'HICN', 'DEA', 'SSN_PARTIAL',
+]);
 
 /** Reserved categories that custom patterns must not use. */
 const RESERVED_CATEGORIES = new Set([...BUILTIN_CATEGORIES].filter((c) => !OPT_IN_CATEGORIES.has(c)));

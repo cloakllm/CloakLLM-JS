@@ -18,12 +18,26 @@
  */
 
 const { DATE_PATTERN, AGE_PATTERN } = require('./clinical-dates');
+const IDS = require('./clinical-ids');
 
 const PATTERNS = {
   EMAIL: {
     pattern: /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/g,
     configKey: 'detectEmails',
   },
+  // v0.13.0 health edition: US healthcare identifiers. Opt-in
+  // (detectUsHealthIds: true). Label-gated categories detect only the value;
+  // structural ones are checked in code (clinical-ids.js accept). Before
+  // SSN so an HICN suffix is not split.
+  HICN: { pattern: new RegExp(IDS.HICN_PATTERN, 'g'), configKey: 'detectUsHealthIds', optIn: true },
+  SSN_PARTIAL: { pattern: new RegExp(IDS.SSN_PARTIAL_PATTERN, 'g'), configKey: 'detectUsHealthIds', optIn: true },
+  MEDICARE_MBI: { pattern: new RegExp(IDS.MBI_PATTERN, 'g'), configKey: 'detectUsHealthIds', optIn: true },
+  DEA: { pattern: new RegExp(IDS.DEA_PATTERN, 'g'), configKey: 'detectUsHealthIds', optIn: true },
+  NPI: { pattern: new RegExp(IDS.NPI_PATTERN, 'g'), configKey: 'detectUsHealthIds', optIn: true },
+  MRN: { pattern: new RegExp(IDS.MRN_PATTERN, 'g'), configKey: 'detectUsHealthIds', optIn: true },
+  ACCOUNT_NUMBER: { pattern: new RegExp(IDS.ACCOUNT_PATTERN, 'g'), configKey: 'detectUsHealthIds', optIn: true },
+  HEALTH_PLAN_ID: { pattern: new RegExp(IDS.HEALTH_PLAN_PATTERN, 'g'), configKey: 'detectUsHealthIds', optIn: true },
+  LICENSE_NUMBER: { pattern: new RegExp(IDS.LICENSE_PATTERN, 'g'), configKey: 'detectUsHealthIds', optIn: true },
   // v0.13.0 health edition: clinical dates and ages over 89 (HIPAA Safe
   // Harbor item C). optIn: enabled only when the config sets the key to
   // `true`. Every other built-in is on unless set to `false`; these must not

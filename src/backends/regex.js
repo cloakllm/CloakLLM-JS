@@ -8,6 +8,9 @@
 const { DetectorBackend } = require('./base');
 const { LOCALE_PATTERNS } = require('../locale-patterns');
 const { isValidDate, isAgeOver89 } = require('../clinical-dates');
+const {
+  VALUE_GROUP_CATEGORIES, US_HEALTH_ID_CATEGORIES, accept: acceptHealthId,
+} = require('../clinical-ids');
 // PATTERNS comes from patterns.js, not detector.js. Importing it from
 // detector.js used to pull in that module's pipeline builder, whose
 // require('./backends/llm') reaches llm-detector.js and its child_process/net
@@ -193,12 +196,18 @@ class RegexBackend extends DetectorBackend {
       let match;
 
       while ((match = regex.exec(text)) !== null) {
-        const start = match.index;
-        const end = start + match[0].length;
+        const end = match.index + match[0].length;
+        // v0.13.0: a label-gated pattern matches LABEL + VALUE; only the value
+        // (its single capture group, which ends the match) is detected, so
+        // the label stays readable.
+        const start = (!custom && VALUE_GROUP_CATEGORIES.has(name))
+          ? end - match[1].length
+          : match.index;
 
         if (coveredSpans.some(([s, e]) => start < e && end > s)) {
           continue;
         }
+        if (!custom && US_HEALTH_ID_CATEGORIES.has(name) && !acceptHealthId(name, text, start, end)) continue;
 
         // v0.12.7 (#10): part of a decimal number is not personal data.
         // Rejected here so the span stays uncovered. A phone number written
@@ -230,7 +239,7 @@ class RegexBackend extends DetectorBackend {
         if (name === 'CREDIT_CARD' && !luhnValid(match[0])) continue;
 
         detections.push({
-          text: match[0],
+          text: text.slice(start, end), // the value only, for label-gated categories
           category: name,
           start,
           end,

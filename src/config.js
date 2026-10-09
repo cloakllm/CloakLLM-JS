@@ -77,6 +77,8 @@ class ShieldConfig {
     // default, and opt-in: see clinical-dates.js.
     this.detectDates = options.detectDates ?? false;
     this.detectAgesOver89 = options.detectAgesOver89 ?? false;
+    // v0.13.0: US healthcare identifiers (see clinical-ids.js). Off, opt-in.
+    this.detectUsHealthIds = options.detectUsHealthIds ?? false;
     // 'tokenize' -> [DATE_0], restored on desanitize.
     // 'generalize_year' -> the Safe Harbor form (four-digit year, or
     // [DATE_REDACTED]; "90+" for an age). Irreversible, like mode 'redact'.

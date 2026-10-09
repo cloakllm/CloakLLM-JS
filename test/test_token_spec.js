@@ -163,7 +163,11 @@ describe('Category Registry', () => {
   it('RESERVED_CATEGORIES is BUILTIN minus exactly the v0.13.0 opt-in categories', () => {
     // DATE and AGE_90PLUS became built-ins in v0.13.0. They are deliberately
     // not reserved, so an existing custom pattern named DATE keeps working.
-    assert.deepStrictEqual(OPT_IN_CATEGORIES, new Set(['DATE', 'AGE_90PLUS']));
+    assert.deepStrictEqual(OPT_IN_CATEGORIES, new Set([
+      'DATE', 'AGE_90PLUS',
+      'MRN', 'ACCOUNT_NUMBER', 'HEALTH_PLAN_ID', 'LICENSE_NUMBER', 'NPI',
+      'MEDICARE_MBI', 'HICN', 'DEA', 'SSN_PARTIAL',
+    ]));
     const expected = new Set([...BUILTIN_CATEGORIES].filter((c) => !OPT_IN_CATEGORIES.has(c)));
     assert.deepStrictEqual(RESERVED_CATEGORIES, expected);
     assert.ok(BUILTIN_CATEGORIES.has('DATE') && !RESERVED_CATEGORIES.has('DATE'));

@@ -15,6 +15,8 @@ export interface ShieldConfigOptions {
   detectDates?: boolean;
   /** v0.13.0: ages over 89 (90+). Off by default; opt-in. */
   detectAgesOver89?: boolean;
+  /** v0.13.0: US healthcare identifiers (MRN, member/Medicaid IDs, NPI, MBI, HICN, DEA, partial SSN...). Off; opt-in. */
+  detectUsHealthIds?: boolean;
   /** v0.13.0: 'generalize_year' = Safe Harbor form (year / 90+), irreversible. */
   dateMode?: 'tokenize' | 'generalize_year';
   customPatterns?: Array<{ name: string; pattern: string }>;
@@ -87,6 +89,7 @@ export class ShieldConfig {
   detectIban: boolean;
   detectDates: boolean;
   detectAgesOver89: boolean;
+  detectUsHealthIds: boolean;
   dateMode: 'tokenize' | 'generalize_year';
   customPatterns: Array<{ name: string; pattern: string }>;
   customLlmCategories: Array<{ name: string; description?: string }>;
