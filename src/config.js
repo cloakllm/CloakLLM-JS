@@ -88,6 +88,10 @@ class ShieldConfig {
     // surname completion for one-word NER names (see clinical-names.js).
     // Emitted as PERSON. Off, opt-in.
     this.detectRoleNames = options.detectRoleNames ?? false;
+    // v0.13.0: do not let NER remove clinical vocabulary ("INR", "Hx COPD")
+    // or the eponym in a disease name ("Crohn's disease"). NER guesses only,
+    // never a regex or LLM detection (see clinical-terms.js). Off, opt-in.
+    this.protectClinicalTerms = options.protectClinicalTerms ?? false;
     this.zipMode = options.zipMode ?? 'tokenize';
     if (this.zipMode !== 'tokenize' && this.zipMode !== 'zip3') {
       throw new Error(`Invalid zipMode '${this.zipMode}'. Must be 'tokenize' or 'zip3'.`);

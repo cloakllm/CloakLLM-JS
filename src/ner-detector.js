@@ -15,6 +15,7 @@ try {
 }
 
 const { extendFirstName } = require('./clinical-names');
+const { isClinicalSpan } = require('./clinical-terms');
 
 const MAX_NER_TEXT_LENGTH = 100_000;
 
@@ -60,6 +61,7 @@ class NerDetector {
       );
     }
     this._extendSurnames = options.extendSurnames === true;
+    this._protectClinicalTerms = options.protectClinicalTerms === true;
   }
 
   /**
@@ -141,6 +143,9 @@ class NerDetector {
       if (!span) continue;
       const start = span[0];
       let end = span[1];
+      // v0.13.0 health edition: a NER guess that is clinical vocabulary or
+      // the eponym in a disease name is not removed (clinical-terms.js).
+      if (this._protectClinicalTerms && isClinicalSpan(text, start, end)) continue;
       // v0.13.0 health edition: "Thomas" -> "Thomas Parkinson" when NER
       // stopped at a surname that is also a disease eponym. Kept short if
       // the surname is already claimed by an earlier pass.
@@ -176,6 +181,7 @@ class NerDetector {
       const span = cleanNerSpan(text, match.index, match.index + match[0].length);
       if (!span) continue;
       const [start, end] = span;
+      if (this._protectClinicalTerms && isClinicalSpan(text, start, end)) continue;
       if (coveredSpans.some(([s, e]) => start < e && end > s)) continue;
       detections.push({
         text: text.slice(start, end), category, start, end, confidence, source: 'ner',
