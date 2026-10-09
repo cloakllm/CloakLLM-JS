@@ -73,6 +73,20 @@ class ShieldConfig {
     this.detectApiKeys = options.detectApiKeys ?? true;
     this.detectIpAddresses = options.detectIpAddresses ?? true;
     this.detectIban = options.detectIban ?? true;
+    // v0.13.0 health edition (HIPAA Safe Harbor dates and ages). Off by
+    // default, and opt-in: see clinical-dates.js.
+    this.detectDates = options.detectDates ?? false;
+    this.detectAgesOver89 = options.detectAgesOver89 ?? false;
+    // 'tokenize' -> [DATE_0], restored on desanitize.
+    // 'generalize_year' -> the Safe Harbor form (four-digit year, or
+    // [DATE_REDACTED]; "90+" for an age). Irreversible, like mode 'redact'.
+    this.dateMode = options.dateMode ?? 'tokenize';
+    if (this.dateMode !== 'tokenize' && this.dateMode !== 'generalize_year') {
+      throw new Error(
+        `Invalid dateMode '${this.dateMode}'. Must be 'tokenize' or 'generalize_year'. `
+        + 'Date shifting is not available: it keeps month and day, so it does not meet HIPAA Safe Harbor.'
+      );
+    }
     /** @type {Array<{name: string, pattern: string}>} */
     this.customPatterns = options.customPatterns ?? [];
     /** @type {Array<{name: string, description: string}>} */

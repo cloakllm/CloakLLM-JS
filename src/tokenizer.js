@@ -7,6 +7,7 @@
  */
 
 const crypto = require('crypto');
+const { GENERALIZED_CATEGORIES, generalize } = require('./clinical-dates');
 
 const {
   CLOAKLLM_TOKEN_REGEX: TOKEN_PATTERN,
@@ -109,6 +110,11 @@ class TokenMap {
       } else {
         const key = det.text.trim();
         token = this.forward.get(key) ?? '';
+        if (!token && GENERALIZED_CATEGORIES.has(det.category)) {
+          // Replaced by its Safe Harbor form, which is derived from the
+          // value, so it is not echoed here.
+          token = `[${det.category}_GENERALIZED]`;
+        }
       }
       const detail = {
         category: det.category,
@@ -177,9 +183,15 @@ class Tokenizer {
 
     // Escape any existing token-like patterns to prevent fake token injection
     let result = this.escapeExistingTokens(text);
+    const generalizeDates = (this.config && this.config.dateMode === 'generalize_year')
+      && tokenMap.mode !== 'redact';
     for (let i = detections.length - 1; i >= 0; i--) {
       const det = detections[i];
-      const token = tokenMap.getOrCreate(det.text, det.category);
+      // v0.13.0: Safe Harbor form (year / "90+"), irreversible and never
+      // stored in the token map.
+      const token = generalizeDates && GENERALIZED_CATEGORIES.has(det.category)
+        ? generalize(det.category, det.text)
+        : tokenMap.getOrCreate(det.text, det.category);
       result = result.slice(0, det.start) + token + result.slice(det.end);
       tokenMap.detections.push(det);
     }

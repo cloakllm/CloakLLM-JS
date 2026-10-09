@@ -37,6 +37,7 @@ const CATEGORY_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 const REGEX_CATEGORIES = new Set([
   'EMAIL', 'SSN', 'CREDIT_CARD', 'PHONE', 'IP_ADDRESS',
   'API_KEY', 'AWS_KEY', 'JWT', 'IBAN', 'IL_ID',
+  'DATE', 'AGE_90PLUS', // v0.13.0 health edition, off by default
 ]);
 
 /** NER categories (Pass 2). */
@@ -105,8 +106,15 @@ const BUILTIN_CATEGORIES = new Set([
   ...LOCALE_CATEGORIES,
 ]);
 
+/**
+ * Opt-in categories added after names were already user-choosable (v0.13.0).
+ * Built in, but NOT reserved: a user who already had a custom pattern or LLM
+ * category called DATE must not get an error on upgrade.
+ */
+const OPT_IN_CATEGORIES = new Set(['DATE', 'AGE_90PLUS']);
+
 /** Reserved categories that custom patterns must not use. */
-const RESERVED_CATEGORIES = BUILTIN_CATEGORIES;
+const RESERVED_CATEGORIES = new Set([...BUILTIN_CATEGORIES].filter((c) => !OPT_IN_CATEGORIES.has(c)));
 
 // --- Validation functions ---
 
@@ -165,6 +173,7 @@ module.exports = {
   LOCALE_CATEGORIES,
   BUILTIN_CATEGORIES,
   RESERVED_CATEGORIES,
+  OPT_IN_CATEGORIES,
   validateToken,
   parseToken,
   isRedactedToken,

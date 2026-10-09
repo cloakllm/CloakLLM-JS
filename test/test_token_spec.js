@@ -14,6 +14,7 @@ const {
   NER_CATEGORIES,
   REGEX_CATEGORIES,
   RESERVED_CATEGORIES,
+  OPT_IN_CATEGORIES,
   // v0.7.0 A4a-2 — special-category PII (GDPR Art. 9 / EU AI Act Art. 4a)
   SPECIAL_CATEGORY_CATEGORIES,
   isRedactedToken,
@@ -159,8 +160,14 @@ describe('Category Registry', () => {
     assert.deepStrictEqual(BUILTIN_CATEGORIES, union);
   });
 
-  it('RESERVED_CATEGORIES equals BUILTIN_CATEGORIES', () => {
-    assert.deepStrictEqual(RESERVED_CATEGORIES, BUILTIN_CATEGORIES);
+  it('RESERVED_CATEGORIES is BUILTIN minus exactly the v0.13.0 opt-in categories', () => {
+    // DATE and AGE_90PLUS became built-ins in v0.13.0. They are deliberately
+    // not reserved, so an existing custom pattern named DATE keeps working.
+    assert.deepStrictEqual(OPT_IN_CATEGORIES, new Set(['DATE', 'AGE_90PLUS']));
+    const expected = new Set([...BUILTIN_CATEGORIES].filter((c) => !OPT_IN_CATEGORIES.has(c)));
+    assert.deepStrictEqual(RESERVED_CATEGORIES, expected);
+    assert.ok(BUILTIN_CATEGORIES.has('DATE') && !RESERVED_CATEGORIES.has('DATE'));
+    assert.ok(RESERVED_CATEGORIES.has('EMAIL'));
   });
 
   it('no overlap between regex and NER', () => {

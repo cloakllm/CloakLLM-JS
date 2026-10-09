@@ -17,10 +17,27 @@
  * to cloakllm-py's PATTERNS (cross-SDK detection differential = 0).
  */
 
+const { DATE_PATTERN, AGE_PATTERN } = require('./clinical-dates');
+
 const PATTERNS = {
   EMAIL: {
     pattern: /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/g,
     configKey: 'detectEmails',
+  },
+  // v0.13.0 health edition: clinical dates and ages over 89 (HIPAA Safe
+  // Harbor item C). optIn: enabled only when the config sets the key to
+  // `true`. Every other built-in is on unless set to `false`; these must not
+  // be, or any config object that does not mention them (Guard's, for one)
+  // would switch them on silently. Validated in code: see clinical-dates.js.
+  DATE: {
+    pattern: new RegExp(DATE_PATTERN, 'g'),
+    configKey: 'detectDates',
+    optIn: true,
+  },
+  AGE_90PLUS: {
+    pattern: new RegExp(AGE_PATTERN, 'g'),
+    configKey: 'detectAgesOver89',
+    optIn: true,
   },
   SSN: {
     pattern: /\b(?!000|666|9\d{2})\d{3}[-\s]?(?!00)\d{2}[-\s]?(?!0000)\d{4}\b/g,

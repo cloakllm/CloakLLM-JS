@@ -11,6 +11,12 @@ export interface ShieldConfigOptions {
   detectApiKeys?: boolean;
   detectIpAddresses?: boolean;
   detectIban?: boolean;
+  /** v0.13.0: HIPAA Safe Harbor dates. Off by default; opt-in. */
+  detectDates?: boolean;
+  /** v0.13.0: ages over 89 (90+). Off by default; opt-in. */
+  detectAgesOver89?: boolean;
+  /** v0.13.0: 'generalize_year' = Safe Harbor form (year / 90+), irreversible. */
+  dateMode?: 'tokenize' | 'generalize_year';
   customPatterns?: Array<{ name: string; pattern: string }>;
   customLlmCategories?: Array<{ name: string; description?: string }>;
   llmDetection?: boolean;
@@ -79,6 +85,9 @@ export class ShieldConfig {
   detectApiKeys: boolean;
   detectIpAddresses: boolean;
   detectIban: boolean;
+  detectDates: boolean;
+  detectAgesOver89: boolean;
+  dateMode: 'tokenize' | 'generalize_year';
   customPatterns: Array<{ name: string; pattern: string }>;
   customLlmCategories: Array<{ name: string; description?: string }>;
   llmDetection: boolean;

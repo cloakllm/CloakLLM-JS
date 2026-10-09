@@ -7,6 +7,7 @@
 
 const { DetectorBackend } = require('./base');
 const { LOCALE_PATTERNS } = require('../locale-patterns');
+const { isValidDate, isAgeOver89 } = require('../clinical-dates');
 // PATTERNS comes from patterns.js, not detector.js. Importing it from
 // detector.js used to pull in that module's pipeline builder, whose
 // require('./backends/llm') reaches llm-detector.js and its child_process/net
@@ -154,8 +155,9 @@ class RegexBackend extends DetectorBackend {
     // v0.6.1 H1.1: built-in patterns are now also gated by the safety check
     // (previously skipped). This caught real bugs in PHONE/IBAN that had
     // been shipping since v0.1.0.
-    for (const [name, { pattern, configKey }] of Object.entries(PATTERNS)) {
-      if (this.config[configKey] === false) continue;
+    for (const [name, { pattern, configKey, optIn }] of Object.entries(PATTERNS)) {
+      // v0.13.0: opt-in categories need an explicit `true`.
+      if (optIn ? this.config[configKey] !== true : this.config[configKey] === false) continue;
       // v0.12.4: THROW, do not skip. Skipping left the process running with
       // this category's detection silently switched off, which is fail-open
       // in a tool whose entire job is not to miss things. A built-in failing
@@ -205,6 +207,10 @@ class RegexBackend extends DetectorBackend {
         // NANP numbers use.
         if (!custom && inDecimalNumber(text, start, end)
             && !(name.startsWith('PHONE') && hasPhoneContext(text, start))) continue;
+
+        // v0.13.0: a date or age pattern only proposes. See clinical-dates.js.
+        if (!custom && name === 'DATE' && !isValidDate(text, start, end)) continue;
+        if (!custom && name === 'AGE_90PLUS' && !isAgeOver89(text, start, end)) continue;
 
         if (name === 'PHONE') {
           const digits = match[0].replace(/[-.\s()+]/g, '');
